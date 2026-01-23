@@ -1,8 +1,8 @@
-sounddevice>=0.4.8
-numpy>=1.26
-soundfile>=0.12.1
+sounddevice>=0.4.6
+numpy>=1.24.0
+edge-tts>=6.1.9
+whisper>=1.1.10
+deep-translator>=1.11.4
 keyboard>=0.13.5
-openai-whisper>=20230314
-edge-tts>=2.5.2
-google_trans_new>=1.1.9
-aiohttp>=3.8.5
+soundfile>=0.12.1
+soundpad_control>=0.1.0
