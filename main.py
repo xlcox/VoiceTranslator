@@ -101,7 +101,7 @@ class VoiceTranslator:
             data, sr = sf.read(filename, dtype='float32')
             data *= self.cfg['audio']['playback_gain']
             data = np.clip(data, -1.0, 1.0)
-            sd.play(data, sr)
+            sd.play(data, sr, device=17)
             sd.wait()
         except Exception as e:
             logger.error(f"Ошибка воспроизведения: {e}")
