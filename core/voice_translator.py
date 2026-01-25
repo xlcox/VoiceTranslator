@@ -12,7 +12,6 @@ import keyboard
 import numpy as np
 import sounddevice as sd
 import whisper
-
 import argostranslate.package
 import argostranslate.translate
 
@@ -29,7 +28,13 @@ class VoiceTranslator:
     """Основной класс приложения для перевода голоса в реальном времени."""
 
     def __init__(self, config, soundpad_manager, logger):
-        """Инициализирует переводчик голоса с указанной конфигурацией."""
+        """Инициализирует переводчик голоса с указанной конфигурацией.
+
+        Args:
+            config: Конфигурация приложения
+            soundpad_manager: Менеджер SoundPad для воспроизведения
+            logger: Логгер для записи событий
+        """
         self.cfg = config
         self.soundpad = soundpad_manager
         self.logger = logger
@@ -44,14 +49,16 @@ class VoiceTranslator:
         self._last_release_time = 0
         self._debounce_delay = 0.05
 
-        self._executor = ThreadPoolExecutor(max_workers=3,
-                                            thread_name_prefix="VT-Worker")
+        self._executor = ThreadPoolExecutor(
+            max_workers=3,
+            thread_name_prefix="VT-Worker"
+        )
 
         self.model = None
         self._model_loading = True
         self._model_load_failed = False
         self.logger.info(
-            f"Загрузка модели Whisper: {self.cfg['translation']['whisper_model']}")
+            f"Loading Whisper model: {self.cfg['translation']['whisper_model']}")
         self._executor.submit(self._load_whisper_model)
 
         self.translator = None
@@ -59,52 +66,42 @@ class VoiceTranslator:
 
         self._fs = self.cfg['audio']['fs']
         self._min_duration = self.cfg['audio']['min_duration']
-
-        # Используем абсолютный путь для временного файла
         self._temp_file = str(Path(self.cfg['audio']['temp_file']).resolve())
 
         self._silence_threshold = 0.01
         self._trim_tail_duration = 0.5
-
-        # Вычисляем максимальный размер буфера для записи
-        # Позволяем записывать до 60 секунд (настраиваемо)
-        self._max_recording_duration = 60  # секунд
-        self._blocksize = 1024  # будет использоваться в run()
-        # Максимум блоков = (макс_длительность * частота) / размер_блока
+        self._max_recording_duration = 60
+        self._blocksize = 1024
         self._max_buffer_blocks = int(
             (self._max_recording_duration * self._fs) / self._blocksize
         )
 
-        self.logger.info("Система инициализирована.")
-        self.logger.debug(f"Путь к временному файлу TTS: {self._temp_file}")
-        self.logger.debug(
-            f"Максимальная длительность записи: {self._max_recording_duration} сек "
-            f"({self._max_buffer_blocks} блоков)")
+        self.logger.debug(f"Temp file: {self._temp_file}")
 
     def _init_translator(self):
-        """Инициализирует Argos Translate с локальными моделями согласно документации."""
-        self.logger.info("Использование Argos Translate (офлайн)")
+        """Инициализирует Argos Translate с локальными моделями."""
         source = self.cfg['translation']['source_lang']
         target = self.cfg['translation']['target_lang']
 
+        self.logger.info(f"Initializing translator: {source}→{target}")
+
         try:
-            # 1. Пытаемся найти уже установленную пару языков
             installed_languages = argostranslate.translate.get_installed_languages()
             from_lang = next(
-                (l for l in installed_languages if l.code == source), None)
+                (l for l in installed_languages if l.code == source), None
+            )
             to_lang = next(
-                (l for l in installed_languages if l.code == target), None)
+                (l for l in installed_languages if l.code == target), None
+            )
 
             if from_lang and to_lang:
                 self.translator = (from_lang, to_lang)
-                self.logger.info(f"Переводчик готов: {source} -> {target}")
+                self.logger.info("Translator ready")
                 return
 
-            # 2. Если языки не установлены, ищем и устанавливаем модель
             self.logger.info(
-                f"Модель для перевода {source}->{target} не найдена, выполняем установку...")
+                f"Model {source}→{target} not found, installing...")
 
-            # Получаем список доступных пакетов
             available_packages = argostranslate.package.get_available_packages()
             needed_package = next(
                 (p for p in available_packages
@@ -113,124 +110,150 @@ class VoiceTranslator:
             )
 
             if needed_package:
-                self.logger.info(
-                    f"Найдена модель: {needed_package}. Начало загрузки...")
-                # Библиотека сама скачает и установит модель
+                self.logger.info(f"Found model: {needed_package}")
                 needed_package.install()
-                self.logger.info("Модель успешно установлена.")
+                self.logger.info("Model installed")
             else:
-                # Резервный вариант: проверяем локальную папку models
                 models_dir = Path("models")
                 model_file = f"translate-{source}_{target}-1_7.argosmodel"
                 model_path = models_dir / model_file
 
                 if model_path.exists():
-                    self.logger.info(
-                        f"Устанавливаем локальную модель: {model_file}")
+                    self.logger.info(f"Using local model: {model_file}")
                     argostranslate.package.install_from_path(str(model_path))
                 else:
                     raise RuntimeError(
-                        f"Не удалось найти модель перевода {source}->{target}. "
-                        f"Проверьте наличие файла {model_file} в папке models или "
-                        f"установите модель через argostranslate.package.update_package_index()"
+                        f"Translation model {source}→{target} not found. "
+                        f"Check {model_file} in models/ directory"
                     )
 
-            # 3. Повторная инициализация после установки
             installed_languages = argostranslate.translate.get_installed_languages()
             from_lang = next(
-                (l for l in installed_languages if l.code == source), None)
+                (l for l in installed_languages if l.code == source), None
+            )
             to_lang = next(
-                (l for l in installed_languages if l.code == target), None)
+                (l for l in installed_languages if l.code == target), None
+            )
 
             if not from_lang or not to_lang:
                 raise RuntimeError(
-                    f"Не удалось найти языки после установки модели: {source} -> {target}"
-                )
+                    f"Languages not found after installation: {source}→{target}")
 
             self.translator = (from_lang, to_lang)
-            self.logger.info(
-                f"Переводчик инициализирован: {source} -> {target}")
+            self.logger.info("Translator initialized")
 
         except Exception as e:
-            self.logger.error(
-                f"Критическая ошибка инициализации Argos Translate: {e}")
-            raise RuntimeError(f"Не удалось инициализировать переводчик: {e}")
+            self.logger.error(f"Translator init failed: {e}")
+            raise RuntimeError(f"Translator initialization failed: {e}")
 
     def _load_whisper_model(self):
         """Загружает модель Whisper в фоновом режиме."""
         try:
             self.model = whisper.load_model(
-                self.cfg['translation']['whisper_model'])
+                self.cfg['translation']['whisper_model']
+            )
             self._model_loading = False
-            self.logger.info("Модель Whisper успешно загружена.")
+            self.logger.info("Whisper model loaded")
         except Exception as e:
-            self.logger.error(f"Ошибка загрузки модели Whisper: {e}")
+            self.logger.error(f"Whisper load error: {e}")
             self._model_loading = False
             self._model_load_failed = True
 
     def _get_state(self):
-        """Потокобезопасное получение состояния."""
+        """Потокобезопасное получение состояния.
+
+        Returns:
+            AppState: Текущее состояние приложения
+        """
         with self._state_lock:
             return self._state
 
     def _set_state(self, new_state):
-        """Потокобезопасное изменение состояния."""
+        """Потокобезопасное изменение состояния.
+
+        Args:
+            new_state: Новое состояние приложения
+        """
         with self._state_lock:
             old_state = self._state
             self._state = new_state
             if old_state != new_state:
                 self.logger.debug(
-                    f"Изменение состояния: {old_state.value} -> {new_state.value}")
+                    f"State: {old_state.value} → {new_state.value}")
 
-    def _can_start_recording(self):
-        """Проверяет возможность начала записи."""
-        return (self._get_state() == AppState.IDLE and
-                not self._model_loading and
-                not self._model_load_failed)
+    def _change_state(self, expected_state, new_state):
+        """Атомарно меняет состояние, если текущее состояние равно expected_state.
+
+        Args:
+            expected_state: Ожидаемое текущее состояние
+            new_state: Новое состояние
+
+        Returns:
+            bool: True если изменение успешно, False в противном случае
+        """
+        with self._state_lock:
+            if self._state == expected_state:
+                self._state = new_state
+                self.logger.debug(
+                    f"State change: {expected_state.value} → {new_state.value}")
+                return True
+        return False
 
     def _trim_silence_from_end(self, audio, sample_rate):
-        """Обрезает тишину в конце аудиозаписи."""
+        """Обрезает тишину в конце аудиозаписи.
+
+        Args:
+            audio: Аудиоданные
+            sample_rate: Частота дискретизации
+
+        Returns:
+            np.ndarray: Обрезанные аудиоданные
+        """
         if len(audio) == 0:
             return audio
 
-        # Уменьшаем порог тишины для лучшего обнаружения
         energy = np.abs(audio)
-        threshold = np.max(energy) * 0.05  # 5% от максимальной энергии
+        threshold = np.max(energy) * 0.05
 
-        # Ищем последнюю точку с энергией выше порога
         for i in range(len(energy) - 1, -1, -1):
             if energy[i] > threshold:
-                # Оставляем небольшую паузу после последнего звука
                 end_point = min(i + int(0.2 * sample_rate), len(audio))
                 return audio[:end_point]
 
-        return audio[:int(
-            sample_rate * 0.1)]  # Возвращаем короткий сегмент если все тихо
+        return audio[:int(sample_rate * 0.1)]
 
     def audio_callback(self, indata, frames, time_info, status):
-        """Callback функция для захвата аудио с микрофона."""
+        """Callback функция для захвата аудио с микрофона.
+
+        Args:
+            indata: Входные аудиоданные
+            frames: Количество кадров
+            time_info: Временная информация
+            status: Статус устройства
+        """
         if status:
-            self.logger.warning(f"Статус аудиоустройства: {status}")
+            self.logger.debug(f"Audio status: {status}")
 
         if self._get_state() == AppState.RECORDING:
             with self._buffer_lock:
-                # Ограничиваем размер буфера для предотвращения утечек памяти
-                # Теперь лимит основан на максимальной длительности записи
                 if len(self.audio_buffer) < self._max_buffer_blocks:
                     self.audio_buffer.append(indata.copy())
-                else:
-                    # Если достигли лимита, логируем предупреждение
-                    if len(self.audio_buffer) == self._max_buffer_blocks:
-                        self.logger.warning(
-                            f"Достигнут максимальный лимит записи "
-                            f"({self._max_recording_duration} сек). "
-                            f"Запись продолжается, но новые данные не сохраняются."
-                        )
+                elif len(self.audio_buffer) == self._max_buffer_blocks:
+                    self.logger.warning(
+                        f"Recording limit reached ({self._max_recording_duration}s)"
+                    )
 
     def _transcribe(self, audio):
-        """Распознает речь в аудиоданных с помощью Whisper."""
+        """Распознает речь в аудиоданных с помощью Whisper.
+
+        Args:
+            audio: Аудиоданные для распознавания
+
+        Returns:
+            str or None: Распознанный текст или None при ошибке
+        """
         if self.model is None:
-            self.logger.error("Модель Whisper не загружена")
+            self.logger.error("Whisper model not loaded")
             return None
 
         if np.max(np.abs(audio)) < 0.01:
@@ -245,11 +268,18 @@ class VoiceTranslator:
             )
             return result["text"].strip()
         except Exception as e:
-            self.logger.error(f"Ошибка транскрипции: {e}")
+            self.logger.error(f"Transcription error: {e}")
             return None
 
     def _translate_sync(self, text):
-        """Синхронная обертка для перевода через Argos."""
+        """Синхронная обертка для перевода через Argos.
+
+        Args:
+            text: Текст для перевода
+
+        Returns:
+            str: Переведенный текст или оригинал при ошибке
+        """
         if not text or not self.translator:
             return text
 
@@ -260,16 +290,22 @@ class VoiceTranslator:
             if translation:
                 return translation.translate(text)
             else:
-                # Пробуем найти альтернативный путь перевода
-                self.logger.warning(
-                    f"Прямой перевод {from_lang.code} -> {to_lang.code} недоступен")
+                self.logger.debug(
+                    f"Direct translation {from_lang.code}→{to_lang.code} not available")
                 return text
         except Exception as e:
-            self.logger.error(f"Ошибка перевода: {e}")
+            self.logger.error(f"Translation error: {e}")
             return text
 
     async def _generate_tts(self, text):
-        """Синтезирует речь из текста с помощью Edge TTS."""
+        """Синтезирует речь из текста с помощью Edge TTS.
+
+        Args:
+            text: Текст для синтеза
+
+        Returns:
+            str or None: Путь к созданному аудиофайлу или None при ошибке
+        """
         if not text:
             return None
 
@@ -284,17 +320,26 @@ class VoiceTranslator:
             await communicate.save(self._temp_file)
             return self._temp_file if os.path.exists(self._temp_file) else None
         except Exception as e:
-            self.logger.error(f"Ошибка синтеза речи: {e}")
+            self.logger.error(f"TTS error: {e}")
             return None
 
     async def process_audio(self):
-        """Обрабатывает записанный аудиосигнал."""
+        """Обрабатывает записанный аудиосигнал.
+
+        Выполняет транскрипцию, перевод и синтез речи.
+        """
+        if self._get_state() != AppState.PROCESSING:
+            self.logger.warning(
+                "Called process_audio when not in PROCESSING state")
+            self._change_state(self._get_state(), AppState.IDLE)
+            return
+
         self._set_state(AppState.PROCESSING)
 
         try:
             with self._buffer_lock:
                 if not self.audio_buffer:
-                    self.logger.warning("Аудиобуфер пуст")
+                    self.logger.warning("Empty audio buffer")
                     return
                 audio = np.concatenate(self.audio_buffer, axis=0).flatten()
                 self.audio_buffer.clear()
@@ -303,177 +348,72 @@ class VoiceTranslator:
             duration = len(audio) / self._fs
 
             if duration < self._min_duration:
-                self.logger.debug(
-                    f"Запись слишком короткая: {duration:.2f} сек.")
+                self.logger.info(f"Recording too short: {duration:.1f}s")
                 return
 
-            self.logger.info(f"Обработка аудио ({duration:.2f} сек)...")
+            self.logger.info(f"Processing ({duration:.1f}s)...")
 
             loop = asyncio.get_running_loop()
-            text = await loop.run_in_executor(self._executor, self._transcribe,
-                                              audio)
+            text = await loop.run_in_executor(
+                self._executor, self._transcribe, audio
+            )
 
             if not text:
-                self.logger.info("Речь не распознана.")
+                self.logger.info("No speech detected")
                 return
 
-            self.logger.info(f"Распознанный текст: {text}")
+            self.logger.info(f"Recognized: {text}")
 
             try:
-                translated = await loop.run_in_executor(self._executor,
-                                                        self._translate_sync,
-                                                        text)
-                self.logger.info(f"Переведенный текст: {translated}")
+                translated = await loop.run_in_executor(
+                    self._executor, self._translate_sync, text
+                )
+                self.logger.info(f"Translated: {translated}")
             except Exception as e:
-                self.logger.error(f"Ошибка перевода: {e}")
+                self.logger.error(f"Translation failed: {e}")
                 return
 
             audio_file = await self._generate_tts(translated)
             if not audio_file:
-                self.logger.error("Ошибка синтеза речи")
+                self.logger.error("TTS failed")
                 return
 
             self._set_state(AppState.PLAYING)
-            self.logger.info("Запуск воспроизведения через SoundPad...")
 
             future = self.soundpad.play_audio_file(audio_file, async_mode=True)
 
             try:
-                success = await asyncio.wait_for(asyncio.wrap_future(future),
-                                                 timeout=30)
-                if success:
-                    self.logger.info("Аудио успешно воспроизведено.")
-                else:
-                    self.logger.error("Ошибка воспроизведения.")
+                success = await asyncio.wait_for(
+                    asyncio.wrap_future(future),
+                    timeout=30
+                )
+                if not success:
+                    self.logger.error("Playback failed")
             except asyncio.TimeoutError:
-                self.logger.error("Превышен таймаут воспроизведения")
+                self.logger.error("Playback timeout")
             except Exception as e:
-                self.logger.error(f"Ошибка при воспроизведении: {e}")
+                self.logger.error(f"Playback error: {e}")
             finally:
-                # Удаляем временный файл после небольшой задержки
                 await asyncio.sleep(1.0)
                 if os.path.exists(audio_file):
                     try:
                         os.remove(audio_file)
-                        self.logger.debug("Временный аудиофайл удален.")
+                        self.logger.debug("Temp file cleaned")
                     except OSError as e:
-                        self.logger.warning(
-                            f"Не удалось удалить временный файл: {e}")
+                        self.logger.debug(f"Cleanup error: {e}")
 
         except Exception as e:
-            self.logger.error(f"Ошибка обработки аудио: {e}", exc_info=True)
+            self.logger.error(f"Processing error: {e}", exc_info=True)
         finally:
             self._set_state(AppState.IDLE)
 
-    def _on_key_press_callback(self, event):
-        """Обработчик нажатия клавиши (вызывается в отдельном потоке)."""
-        # Если мы уже пишем (IDLE -> RECORDING), игнорируем повторные события (авто-повтор клавиш)
-        if self._get_state() == AppState.IDLE:
-            # Проверка дебаунса (защита от дребезга)
-            if time.time() - self._last_release_time > self._debounce_delay:
-                # Проверяем готовность моделей перед началом
-                if not self._model_loading and not self._model_load_failed:
-                    self._set_state(AppState.RECORDING)
-                    self._hotkey_pressed_time = time.time()
-                    with self._buffer_lock:
-                        self.audio_buffer.clear()
-                    self.logger.debug("Начало записи аудио (Hook).")
-
-    def _on_key_release_callback(self, event):
-        """Обработчик отпускания клавиши (вызывается в отдельном потоке)."""
-        if self._get_state() == AppState.RECORDING:
-            current_time = time.time()
-            press_duration = current_time - self._hotkey_pressed_time
-            self._last_release_time = current_time
-
-            if press_duration >= self._min_hotkey_press:
-                self.logger.debug(
-                    f"Окончание записи аудио (длительность: {press_duration:.2f}с).")
-                # Важно: запускаем асинхронную обработку в основном event loop
-                if hasattr(self, 'loop') and self.loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self.process_audio(),
-                                                     self.loop)
-                else:
-                    self.logger.warning("Event loop недоступен.")
-                    self._set_state(AppState.IDLE)
-            else:
-                # Сброс, если нажатие слишком короткое
-                with self._buffer_lock:
-                    self.audio_buffer.clear()
-                self._set_state(AppState.IDLE)
-                self.logger.debug("Слишком короткое нажатие клавиши.")
-
-    async def run(self):
-        """Основной цикл работы приложения."""
-        if self._model_load_failed:
-            self.logger.error(
-                "Модель Whisper не загрузилась. Завершение работы.")
-            return
-
-        while self._model_loading:
-            self.logger.info("Ожидание загрузки модели Whisper...")
-            await asyncio.sleep(0.5)
-
-        if self.model is None:
-            self.logger.error(
-                "Не удалось загрузить модель Whisper. Завершение работы.")
-            return
-
-        hotkey = self.cfg['app']['hotkey']
-        self.logger.info(
-            f"Система готова к работе. Удерживайте клавишу '{hotkey}' для записи.")
-
-        # Сохраняем ссылку на текущий loop для колбэков
-        self.loop = asyncio.get_running_loop()
-        # Событие для удержания приложения запущенным
-        self._stop_event = asyncio.Event()
-
-        # Регистрация хуков клавиатуры
-        try:
-            # Очищаем старые хуки
-            keyboard.unhook_all()
-
-            # Используем правильный API keyboard
-            keyboard.hook_key(hotkey, self._on_keyboard_event, suppress=False)
-
-        except Exception as e:
-            self.logger.error(f"Ошибка установки хуков клавиатуры: {e}")
-            return
-
-        try:
-            # Запускаем стрим микрофона и ждем события остановки
-            with sd.InputStream(
-                    samplerate=self._fs,
-                    channels=1,
-                    dtype='float32',
-                    callback=self.audio_callback,
-                    blocksize=self._blocksize
-                    # Используем сохраненное значение
-            ):
-                # Ждем сигнала завершения
-                await self._stop_event.wait()
-        except Exception as e:
-            self.logger.error(f"Ошибка в аудиопотоке: {e}", exc_info=True)
-        finally:
-            try:
-                keyboard.unhook_all()
-            except:
-                pass
-
-    def _change_state(self, expected_state, new_state):
-        """Атомарно меняет состояние, если текущее состояние равно expected_state."""
-        with self._state_lock:
-            if self._state == expected_state:
-                self._state = new_state
-                self.logger.debug(
-                    f"Атомарное изменение состояния: {expected_state.value} -> {new_state.value}")
-                return True
-        return False
-
     def _on_keyboard_event(self, event):
-        """Единый обработчик событий клавиатуры (нажатие и отпускание)."""
+        """Единый обработчик событий клавиатуры (нажатие и отпускание).
+
+        Args:
+            event: Событие клавиатуры
+        """
         if event.event_type == keyboard.KEY_DOWN:
-            # Обработка нажатия с атомарной проверкой
             if (
                     time.time() - self._last_release_time > self._debounce_delay and
                     not self._model_loading and not self._model_load_failed):
@@ -482,50 +422,87 @@ class VoiceTranslator:
                     self._hotkey_pressed_time = time.time()
                     with self._buffer_lock:
                         self.audio_buffer.clear()
-                    self.logger.debug("Начало записи аудио.")
+                    self.logger.debug("Recording started")
 
         elif event.event_type == keyboard.KEY_UP:
-            # Обработка отпускания с атомарной проверкой
-            if self._get_state() == AppState.RECORDING:
-                current_time = time.time()
-                press_duration = current_time - self._hotkey_pressed_time
-                self._last_release_time = current_time
+            current_time = time.time()
+            press_duration = current_time - self._hotkey_pressed_time
+            self._last_release_time = current_time
 
+            if self._get_state() == AppState.RECORDING:
                 if press_duration >= self._min_hotkey_press:
-                    # Атомарный переход из RECORDING в PROCESSING
                     if self._change_state(AppState.RECORDING,
                                           AppState.PROCESSING):
-                        self.logger.debug(
-                            f"Окончание записи аудио (длительность: {press_duration:.2f}с).")
+                        self.logger.info(
+                            f"Recording finished ({press_duration:.1f}s)")
 
-                        # Запускаем асинхронную обработку
                         if hasattr(self, 'loop') and self.loop.is_running():
                             asyncio.run_coroutine_threadsafe(
-                                self.process_audio(), self.loop)
+                                self.process_audio(), self.loop
+                            )
                         else:
-                            self.logger.warning("Event loop недоступен.")
-                            self._set_state(AppState.IDLE)
-                    else:
-                        # Не удалось перейти в PROCESSING (уже не в RECORDING)
-                        self.logger.debug(
-                            "Состояние изменилось до завершения обработки KEY_UP")
+                            self.logger.error("Event loop unavailable")
+                            self._change_state(AppState.PROCESSING,
+                                               AppState.IDLE)
                 else:
-                    # Короткое нажатие - атомарный возврат в IDLE
                     if self._change_state(AppState.RECORDING, AppState.IDLE):
                         with self._buffer_lock:
                             self.audio_buffer.clear()
-                        self.logger.debug("Слишком короткое нажатие клавиши.")
+                        self.logger.debug("Short key press ignored")
+
+    async def run(self):
+        """Основной цикл работы приложения."""
+        if self._model_load_failed:
+            self.logger.error("Whisper model failed to load")
+            return
+
+        while self._model_loading:
+            await asyncio.sleep(0.5)
+
+        if self.model is None:
+            self.logger.error("Whisper model not available")
+            return
+
+        hotkey = self.cfg['app']['hotkey']
+        self.logger.info(f"Ready. Hold '{hotkey}' to record")
+
+        self.loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+
+        try:
+            keyboard.unhook_all()
+            keyboard.hook_key(hotkey, self._on_keyboard_event, suppress=False)
+        except Exception as e:
+            self.logger.error(f"Keyboard hook error: {e}")
+            return
+
+        try:
+            with sd.InputStream(
+                    samplerate=self._fs,
+                    channels=1,
+                    dtype='float32',
+                    callback=self.audio_callback,
+                    blocksize=self._blocksize
+            ):
+                await self._stop_event.wait()
+        except Exception as e:
+            self.logger.error(f"Audio stream error: {e}", exc_info=True)
+        finally:
+            try:
+                keyboard.unhook_all()
+            except Exception:
+                pass
 
     def shutdown(self):
         """Освобождает ресурсы при завершении работы."""
-        self.logger.info("Завершение работы...")
+        self.logger.info("Shutting down...")
 
         if hasattr(self, '_stop_event'):
             self._stop_event.set()
 
         try:
-            keyboard.unhook_all()  # Изменено с unhook_all_hotkeys()
-        except:
+            keyboard.unhook_all()
+        except Exception:
             pass
 
         self._executor.shutdown(wait=True, cancel_futures=True)

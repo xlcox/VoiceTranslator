@@ -3,61 +3,79 @@ import asyncio
 import signal
 import sys
 
-from core.config import load_config
 from core.logger_config import setup_logger
+from core.config import load_config
 from core.soundpad_manager import SoundpadManager
 from core.voice_translator import VoiceTranslator
 
 
 def signal_handler(signum, frame):
-    """Обработчик сигналов для корректного завершения."""
-    print("\nПолучен сигнал завершения. Остановка приложения...")
+    """Обработчик сигналов для корректного завершения.
+
+    Args:
+        signum: Номер сигнала
+        frame: Текущий стек вызовов
+    """
+    print("\nTermination signal received. Stopping...")
     sys.exit(0)
 
 
 async def async_main():
     """Асинхронная основная функция."""
+    # Загружаем конфиг первым делом
     config = load_config()
-    logger = setup_logger("VoiceTranslator", config["app"]["log_level"])
+
+    # Настраиваем логгеры для каждого модуля с общим уровнем логирования
+    log_level = config["app"]["log_level"]
+
+    # Создаем логгеры для каждого модуля
+    config_logger = setup_logger("Config", log_level)
+    main_logger = setup_logger("Main", log_level)
+    soundpad_logger = setup_logger("SoundPad", log_level)
+    translator_logger = setup_logger("Translator", log_level)
+
+    main_logger.info("=" * 50)
+    main_logger.info("Voice Translator with SoundPad")
+    main_logger.info(f"Log level: {log_level}")
+    main_logger.info("=" * 50)
 
     soundpad_mgr = None
     app = None
 
     try:
-        soundpad_mgr = SoundpadManager(config, logger)
-        app = VoiceTranslator(config, soundpad_mgr, logger)
+        # Передаем логгеры в соответствующие модули
+        soundpad_mgr = SoundpadManager(config, soundpad_logger)
+        app = VoiceTranslator(config, soundpad_mgr, translator_logger)
         await app.run()
     except KeyboardInterrupt:
-        logger.info("Получен сигнал прерывания (Ctrl+C).")
+        main_logger.info("Interrupted by user")
     except Exception as e:
-        logger.error(f"Критическая ошибка в основном потоке: {e}",
-                     exc_info=True)
+        main_logger.error(f"Critical error: {e}", exc_info=True)
     finally:
+        main_logger.info("-" * 50)
         if app:
             app.shutdown()
         if soundpad_mgr:
             soundpad_mgr.cleanup()
-        logger.info("Приложение завершено.")
+        main_logger.info("Application stopped")
+        main_logger.info("=" * 50)
 
 
 def main():
     """Основная функция запуска приложения."""
-    # Регистрация обработчиков сигналов
     signal.signal(signal.SIGINT, signal_handler)
     if sys.platform != 'win32':
         signal.signal(signal.SIGTERM, signal_handler)
 
-    # Для Windows: настройка политики event loop
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-    # Запуск асинхронного приложения
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:
-        pass  # Уже обработано в async_main
+        pass
     except Exception as e:
-        print(f"Критическая ошибка при запуске: {e}")
+        print(f"Critical startup error: {e}")
         sys.exit(1)
 
 

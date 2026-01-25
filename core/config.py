@@ -1,14 +1,20 @@
 """Конфигурационный модуль для загрузки и управления настройками приложения."""
 import json
-import os
+import logging
 from pathlib import Path
-from .logger_config import setup_logger
 
-_temp_logger = setup_logger("ConfigLoader", "INFO")
+logger = logging.getLogger(__name__)
 
 
 def load_config(filename="config.json"):
-    """Загружает конфигурацию из файла JSON или создает файл с настройками по умолчанию."""
+    """Загружает конфигурацию из JSON файла или создает файл с настройками по умолчанию.
+
+    Args:
+        filename: Имя конфигурационного файла
+
+    Returns:
+        dict: Загруженная конфигурация
+    """
     default_config = {
         "app": {
             "log_level": "INFO",
@@ -48,16 +54,14 @@ def load_config(filename="config.json"):
     config_path = Path(filename)
 
     if not config_path.exists():
-        _temp_logger.info(
-            f"Конфиг {filename} не найден, создаем с настройками по умолчанию")
+        logger.info(f"Creating default config: {filename}")
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(default_config, f, indent=2, ensure_ascii=False)
-            _temp_logger.info(f"Конфиг создан: {config_path.absolute()}")
+            logger.info(f"Config created: {config_path.absolute()}")
             return default_config
         except Exception as e:
-            _temp_logger.error(
-                f"Ошибка создания конфига: {e}, используем настройки по умолчанию")
+            logger.error(f"Config creation error: {e}, using defaults")
             return default_config
 
     try:
@@ -65,25 +69,33 @@ def load_config(filename="config.json"):
             user_config = json.load(f)
 
         merged_config = _merge_configs(default_config, user_config)
-        _temp_logger.info(f"Конфиг загружен из {config_path.absolute()}")
+        logger.debug(f"Loaded config from: {config_path.absolute()}")
         return merged_config
     except json.JSONDecodeError as e:
-        _temp_logger.error(
-            f"Ошибка парсинга JSON: {e}, используем настройки по умолчанию")
+        logger.error(f"JSON parse error: {e}, using defaults")
         return default_config
     except Exception as e:
-        _temp_logger.error(
-            f"Ошибка загрузки конфига: {e}, используем настройки по умолчанию")
+        logger.error(f"Config load error: {e}, using defaults")
         return default_config
 
 
 def _merge_configs(default, user):
-    """Рекурсивно объединяет две конфигурации, сохраняя значения по умолчанию для отсутствующих ключей."""
+    """Рекурсивно объединяет две конфигурации.
+
+    Сохраняет значения по умолчанию для отсутствующих ключей.
+
+    Args:
+        default: Конфигурация по умолчанию
+        user: Пользовательская конфигурация
+
+    Returns:
+        dict: Объединенная конфигурация
+    """
     result = default.copy()
 
     for key, value in user.items():
-        if key in result and isinstance(result[key], dict) and isinstance(
-                value, dict):
+        if (key in result and isinstance(result[key], dict)
+                and isinstance(value, dict)):
             result[key] = _merge_configs(result[key], value)
         else:
             result[key] = value
