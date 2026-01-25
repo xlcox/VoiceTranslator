@@ -59,11 +59,15 @@ class VoiceTranslator:
 
         self._fs = self.cfg['audio']['fs']
         self._min_duration = self.cfg['audio']['min_duration']
-        self._temp_file = self.cfg['audio']['temp_file']
+
+        # ВАЖНО: Используем абсолютный путь для временного файла
+        self._temp_file = str(Path(self.cfg['audio']['temp_file']).resolve())
+
         self._silence_threshold = 0.01
-        self._trim_tail_duration = 0.5  # Уменьшено с 2.0 для лучшей отзывчивости
+        self._trim_tail_duration = 0.5
 
         self.logger.info("Система инициализирована.")
+        self.logger.debug(f"Путь к временному файлу TTS: {self._temp_file}")
 
     def _init_translator(self):
         """Инициализирует Argos Translate с локальными моделями согласно документации."""
@@ -340,6 +344,44 @@ class VoiceTranslator:
         finally:
             self._set_state(AppState.IDLE)
 
+    def _on_key_press_callback(self, event):
+        """Обработчик нажатия клавиши (вызывается в отдельном потоке)."""
+        # Если мы уже пишем (IDLE -> RECORDING), игнорируем повторные события (авто-повтор клавиш)
+        if self._get_state() == AppState.IDLE:
+            # Проверка дебаунса (защита от дребезга)
+            if time.time() - self._last_release_time > self._debounce_delay:
+                # Проверяем готовность моделей перед началом
+                if not self._model_loading and not self._model_load_failed:
+                    self._set_state(AppState.RECORDING)
+                    self._hotkey_pressed_time = time.time()
+                    with self._buffer_lock:
+                        self.audio_buffer.clear()
+                    self.logger.debug("Начало записи аудио (Hook).")
+
+    def _on_key_release_callback(self, event):
+        """Обработчик отпускания клавиши (вызывается в отдельном потоке)."""
+        if self._get_state() == AppState.RECORDING:
+            current_time = time.time()
+            press_duration = current_time - self._hotkey_pressed_time
+            self._last_release_time = current_time
+
+            if press_duration >= self._min_hotkey_press:
+                self.logger.debug(
+                    f"Окончание записи аудио (длительность: {press_duration:.2f}с).")
+                # Важно: запускаем асинхронную обработку в основном event loop
+                if hasattr(self, 'loop') and self.loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.process_audio(),
+                                                     self.loop)
+                else:
+                    self.logger.warning("Event loop недоступен.")
+                    self._set_state(AppState.IDLE)
+            else:
+                # Сброс, если нажатие слишком короткое
+                with self._buffer_lock:
+                    self.audio_buffer.clear()
+                self._set_state(AppState.IDLE)
+                self.logger.debug("Слишком короткое нажатие клавиши.")
+
     async def run(self):
         """Основной цикл работы приложения."""
         if self._model_load_failed:
@@ -360,60 +402,93 @@ class VoiceTranslator:
         self.logger.info(
             f"Система готова к работе. Удерживайте клавишу '{hotkey}' для записи.")
 
-        was_pressed = False
+        # Сохраняем ссылку на текущий loop для колбэков
+        self.loop = asyncio.get_running_loop()
+        # Событие для удержания приложения запущенным
+        self._stop_event = asyncio.Event()
 
-        with sd.InputStream(
-                samplerate=self._fs,
-                channels=1,
-                dtype='float32',
-                callback=self.audio_callback,
-                blocksize=1024
-        ):
-            while True:
-                try:
-                    current_time = time.time()
-                    is_pressed = keyboard.is_pressed(hotkey)
+        # Регистрация хуков клавиатуры
+        try:
+            # Очищаем старые хуки
+            keyboard.unhook_all()
 
-                    if is_pressed and not was_pressed:
-                        if self._can_start_recording():
-                            if current_time - self._last_release_time > self._debounce_delay:
-                                self._set_state(AppState.RECORDING)
-                                self._hotkey_pressed_time = current_time
-                                with self._buffer_lock:
-                                    self.audio_buffer.clear()
-                                self.logger.debug("Начало записи аудио.")
-                        was_pressed = True
+            # Используем правильный API keyboard
+            keyboard.hook_key(hotkey, self._on_keyboard_event, suppress=False)
 
-                    elif not is_pressed and was_pressed:
-                        if self._get_state() == AppState.RECORDING:
-                            press_duration = current_time - self._hotkey_pressed_time
-                            self._last_release_time = current_time
+        except Exception as e:
+            self.logger.error(f"Ошибка установки хуков клавиатуры: {e}")
+            return
 
-                            if press_duration >= self._min_hotkey_press:
-                                self.logger.debug(
-                                    f"Окончание записи аудио (длительность: {press_duration:.2f}с).")
-                                asyncio.create_task(self.process_audio())
-                            else:
-                                with self._buffer_lock:
-                                    self.audio_buffer.clear()
-                                self._set_state(AppState.IDLE)
-                                self.logger.debug(
-                                    "Слишком короткое нажатие клавиши.")
-                        was_pressed = False
+        try:
+            # Запускаем стрим микрофона и ждем события остановки
+            with sd.InputStream(
+                    samplerate=self._fs,
+                    channels=1,
+                    dtype='float32',
+                    callback=self.audio_callback,
+                    blocksize=1024
+            ):
+                # Ждем сигнала завершения
+                await self._stop_event.wait()
+        except Exception as e:
+            self.logger.error(f"Ошибка в аудиопотоке: {e}", exc_info=True)
+        finally:
+            try:
+                keyboard.unhook_all()
+            except:
+                pass
 
-                except Exception as e:
-                    self.logger.error(f"Ошибка в основном цикле: {e}",
-                                      exc_info=True)
-                    self._set_state(AppState.IDLE)
-                    was_pressed = False
+    def _on_keyboard_event(self, event):
+        """Единый обработчик событий клавиатуры (нажатие и отпускание)."""
+        if event.event_type == keyboard.KEY_DOWN:
+            # Обработка нажатия
+            if self._get_state() == AppState.IDLE:
+                # Проверка дебаунса
+                if time.time() - self._last_release_time > self._debounce_delay:
+                    # Проверяем готовность моделей перед началом
+                    if not self._model_loading and not self._model_load_failed:
+                        self._set_state(AppState.RECORDING)
+                        self._hotkey_pressed_time = time.time()
+                        with self._buffer_lock:
+                            self.audio_buffer.clear()
+                        self.logger.debug("Начало записи аудио.")
+
+        elif event.event_type == keyboard.KEY_UP:
+            # Обработка отпускания
+            if self._get_state() == AppState.RECORDING:
+                current_time = time.time()
+                press_duration = current_time - self._hotkey_pressed_time
+                self._last_release_time = current_time
+
+                if press_duration >= self._min_hotkey_press:
+                    self.logger.debug(
+                        f"Окончание записи аудио (длительность: {press_duration:.2f}с).")
+                    # Запускаем асинхронную обработку в основном event loop
+                    if hasattr(self, 'loop') and self.loop.is_running():
+                        asyncio.run_coroutine_threadsafe(self.process_audio(),
+                                                         self.loop)
+                    else:
+                        self.logger.warning("Event loop недоступен.")
+                        self._set_state(AppState.IDLE)
+                else:
+                    # Сброс, если нажатие слишком короткое
                     with self._buffer_lock:
                         self.audio_buffer.clear()
-
-                await asyncio.sleep(0.02)
+                    self._set_state(AppState.IDLE)
+                    self.logger.debug("Слишком короткое нажатие клавиши.")
 
     def shutdown(self):
         """Освобождает ресурсы при завершении работы."""
         self.logger.info("Завершение работы...")
+
+        if hasattr(self, '_stop_event'):
+            self._stop_event.set()
+
+        try:
+            keyboard.unhook_all()  # Изменено с unhook_all_hotkeys()
+        except:
+            pass
+
         self._executor.shutdown(wait=True, cancel_futures=True)
         if os.path.exists(self._temp_file):
             try:
