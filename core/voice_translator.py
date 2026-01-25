@@ -60,14 +60,26 @@ class VoiceTranslator:
         self._fs = self.cfg['audio']['fs']
         self._min_duration = self.cfg['audio']['min_duration']
 
-        # ВАЖНО: Используем абсолютный путь для временного файла
+        # Используем абсолютный путь для временного файла
         self._temp_file = str(Path(self.cfg['audio']['temp_file']).resolve())
 
         self._silence_threshold = 0.01
         self._trim_tail_duration = 0.5
 
+        # Вычисляем максимальный размер буфера для записи
+        # Позволяем записывать до 60 секунд (настраиваемо)
+        self._max_recording_duration = 60  # секунд
+        self._blocksize = 1024  # будет использоваться в run()
+        # Максимум блоков = (макс_длительность * частота) / размер_блока
+        self._max_buffer_blocks = int(
+            (self._max_recording_duration * self._fs) / self._blocksize
+        )
+
         self.logger.info("Система инициализирована.")
         self.logger.debug(f"Путь к временному файлу TTS: {self._temp_file}")
+        self.logger.debug(
+            f"Максимальная длительность записи: {self._max_recording_duration} сек "
+            f"({self._max_buffer_blocks} блоков)")
 
     def _init_translator(self):
         """Инициализирует Argos Translate с локальными моделями согласно документации."""
@@ -203,8 +215,17 @@ class VoiceTranslator:
         if self._get_state() == AppState.RECORDING:
             with self._buffer_lock:
                 # Ограничиваем размер буфера для предотвращения утечек памяти
-                if len(self.audio_buffer) < 100:  # Максимум 100 блоков
+                # Теперь лимит основан на максимальной длительности записи
+                if len(self.audio_buffer) < self._max_buffer_blocks:
                     self.audio_buffer.append(indata.copy())
+                else:
+                    # Если достигли лимита, логируем предупреждение
+                    if len(self.audio_buffer) == self._max_buffer_blocks:
+                        self.logger.warning(
+                            f"Достигнут максимальный лимит записи "
+                            f"({self._max_recording_duration} сек). "
+                            f"Запись продолжается, но новые данные не сохраняются."
+                        )
 
     def _transcribe(self, audio):
         """Распознает речь в аудиоданных с помощью Whisper."""
@@ -426,7 +447,8 @@ class VoiceTranslator:
                     channels=1,
                     dtype='float32',
                     callback=self.audio_callback,
-                    blocksize=1024
+                    blocksize=self._blocksize
+                    # Используем сохраненное значение
             ):
                 # Ждем сигнала завершения
                 await self._stop_event.wait()
