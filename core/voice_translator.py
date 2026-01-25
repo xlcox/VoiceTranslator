@@ -460,44 +460,61 @@ class VoiceTranslator:
             except:
                 pass
 
+    def _change_state(self, expected_state, new_state):
+        """Атомарно меняет состояние, если текущее состояние равно expected_state."""
+        with self._state_lock:
+            if self._state == expected_state:
+                self._state = new_state
+                self.logger.debug(
+                    f"Атомарное изменение состояния: {expected_state.value} -> {new_state.value}")
+                return True
+        return False
+
     def _on_keyboard_event(self, event):
         """Единый обработчик событий клавиатуры (нажатие и отпускание)."""
         if event.event_type == keyboard.KEY_DOWN:
-            # Обработка нажатия
-            if self._get_state() == AppState.IDLE:
-                # Проверка дебаунса
-                if time.time() - self._last_release_time > self._debounce_delay:
-                    # Проверяем готовность моделей перед началом
-                    if not self._model_loading and not self._model_load_failed:
-                        self._set_state(AppState.RECORDING)
-                        self._hotkey_pressed_time = time.time()
-                        with self._buffer_lock:
-                            self.audio_buffer.clear()
-                        self.logger.debug("Начало записи аудио.")
+            # Обработка нажатия с атомарной проверкой
+            if (
+                    time.time() - self._last_release_time > self._debounce_delay and
+                    not self._model_loading and not self._model_load_failed):
+
+                if self._change_state(AppState.IDLE, AppState.RECORDING):
+                    self._hotkey_pressed_time = time.time()
+                    with self._buffer_lock:
+                        self.audio_buffer.clear()
+                    self.logger.debug("Начало записи аудио.")
 
         elif event.event_type == keyboard.KEY_UP:
-            # Обработка отпускания
+            # Обработка отпускания с атомарной проверкой
             if self._get_state() == AppState.RECORDING:
                 current_time = time.time()
                 press_duration = current_time - self._hotkey_pressed_time
                 self._last_release_time = current_time
 
                 if press_duration >= self._min_hotkey_press:
-                    self.logger.debug(
-                        f"Окончание записи аудио (длительность: {press_duration:.2f}с).")
-                    # Запускаем асинхронную обработку в основном event loop
-                    if hasattr(self, 'loop') and self.loop.is_running():
-                        asyncio.run_coroutine_threadsafe(self.process_audio(),
-                                                         self.loop)
+                    # Атомарный переход из RECORDING в PROCESSING
+                    if self._change_state(AppState.RECORDING,
+                                          AppState.PROCESSING):
+                        self.logger.debug(
+                            f"Окончание записи аудио (длительность: {press_duration:.2f}с).")
+
+                        # Запускаем асинхронную обработку
+                        if hasattr(self, 'loop') and self.loop.is_running():
+                            asyncio.run_coroutine_threadsafe(
+                                self.process_audio(), self.loop)
+                        else:
+                            self.logger.warning("Event loop недоступен.")
+                            self._set_state(AppState.IDLE)
                     else:
-                        self.logger.warning("Event loop недоступен.")
-                        self._set_state(AppState.IDLE)
+                        # Не удалось перейти в PROCESSING (уже не в RECORDING)
+                        self.logger.debug(
+                            "Состояние изменилось до завершения обработки KEY_UP")
                 else:
-                    # Сброс, если нажатие слишком короткое
-                    with self._buffer_lock:
-                        self.audio_buffer.clear()
-                    self._set_state(AppState.IDLE)
-                    self.logger.debug("Слишком короткое нажатие клавиши.")
+                    # Короткое нажатие - атомарный возврат в IDLE
+                    if self._change_state(AppState.RECORDING, AppState.IDLE):
+                        with self._buffer_lock:
+                            self.audio_buffer.clear()
+                        self.logger.debug("Слишком короткое нажатие клавиши.")
 
     def shutdown(self):
         """Освобождает ресурсы при завершении работы."""
