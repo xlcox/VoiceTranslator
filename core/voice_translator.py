@@ -15,6 +15,15 @@ import whisper
 import argostranslate.package
 import argostranslate.translate
 
+from .constants import (
+    AUDIO_SAMPLE_RATE, AUDIO_MIN_DURATION, AUDIO_PLAYBACK_GAIN,
+    AUDIO_TEMP_FILE, AUDIO_SILENCE_THRESHOLD, AUDIO_TRIM_TAIL_DURATION,
+    AUDIO_MAX_RECORDING_DURATION, AUDIO_BLOCKSIZE,
+    HOTKEY_MIN_PRESS_DURATION, HOTKEY_DEBOUNCE_DELAY,
+    PLAYBACK_WAIT_BUFFER, PLAYBACK_MAX_TIMEOUT,
+    MODELS_DIR, TRANSLATION_ENGINE
+)
+
 
 class AppState(Enum):
     """Состояния приложения."""
@@ -45,9 +54,9 @@ class VoiceTranslator:
         self._buffer_lock = threading.Lock()
 
         self._hotkey_pressed_time = 0
-        self._min_hotkey_press = 0.1
+        self._min_hotkey_press = HOTKEY_MIN_PRESS_DURATION
         self._last_release_time = 0
-        self._debounce_delay = 0.05
+        self._debounce_delay = HOTKEY_DEBOUNCE_DELAY
 
         self._executor = ThreadPoolExecutor(
             max_workers=3,
@@ -64,14 +73,14 @@ class VoiceTranslator:
         self.translator = None
         self._init_translator()
 
-        self._fs = self.cfg['audio']['fs']
-        self._min_duration = self.cfg['audio']['min_duration']
-        self._temp_file = str(Path(self.cfg['audio']['temp_file']).resolve())
+        self._fs = AUDIO_SAMPLE_RATE
+        self._min_duration = AUDIO_MIN_DURATION
+        self._temp_file = str(Path(AUDIO_TEMP_FILE).resolve())
 
-        self._silence_threshold = 0.01
-        self._trim_tail_duration = 0.5
-        self._max_recording_duration = 60
-        self._blocksize = 1024
+        self._silence_threshold = AUDIO_SILENCE_THRESHOLD
+        self._trim_tail_duration = AUDIO_TRIM_TAIL_DURATION
+        self._max_recording_duration = AUDIO_MAX_RECORDING_DURATION
+        self._blocksize = AUDIO_BLOCKSIZE
         self._max_buffer_blocks = int(
             (self._max_recording_duration * self._fs) / self._blocksize
         )
@@ -114,7 +123,7 @@ class VoiceTranslator:
                 needed_package.install()
                 self.logger.info("Model installed")
             else:
-                models_dir = Path("models")
+                models_dir = Path(MODELS_DIR)
                 model_file = f"translate-{source}_{target}-1_7.argosmodel"
                 model_path = models_dir / model_file
 
@@ -124,7 +133,7 @@ class VoiceTranslator:
                 else:
                     raise RuntimeError(
                         f"Translation model {source}→{target} not found. "
-                        f"Check {model_file} in models/ directory"
+                        f"Check {model_file} in {MODELS_DIR}/ directory"
                     )
 
             installed_languages = argostranslate.translate.get_installed_languages()
@@ -385,7 +394,7 @@ class VoiceTranslator:
             try:
                 success = await asyncio.wait_for(
                     asyncio.wrap_future(future),
-                    timeout=30
+                    timeout=PLAYBACK_MAX_TIMEOUT
                 )
                 if not success:
                     self.logger.error("Playback failed")
@@ -394,7 +403,7 @@ class VoiceTranslator:
             except Exception as e:
                 self.logger.error(f"Playback error: {e}")
             finally:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(PLAYBACK_WAIT_BUFFER)
                 if os.path.exists(audio_file):
                     try:
                         os.remove(audio_file)

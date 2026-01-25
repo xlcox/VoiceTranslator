@@ -3,10 +3,12 @@ import json
 import logging
 from pathlib import Path
 
+from .constants import CONFIG_FILE
+
 logger = logging.getLogger(__name__)
 
 
-def load_config(filename="config.json"):
+def load_config(filename=CONFIG_FILE):
     """Загружает конфигурацию из JSON файла или создает файл с настройками по умолчанию.
 
     Args:
@@ -20,17 +22,10 @@ def load_config(filename="config.json"):
             "log_level": "INFO",
             "hotkey": "page up"
         },
-        "audio": {
-            "fs": 16000,
-            "min_duration": 0.8,
-            "playback_gain": 1.5,
-            "temp_file": "tts_temp.wav"
-        },
         "translation": {
             "source_lang": "ru",
             "target_lang": "zh",
-            "whisper_model": "small",
-            "engine": "argos"
+            "whisper_model": "small"
         },
         "tts": {
             "voice": "zh-CN-YunxiNeural",
@@ -38,16 +33,8 @@ def load_config(filename="config.json"):
             "volume": "+30%"
         },
         "soundpad": {
-            "enabled": True,
-            "auto_start": True,
-            "soundpad_path": "SoundPad/Soundpad.exe",
             "play_in_speakers": True,
-            "play_in_microphone": True,
-            "cleanup_after_play": True,
-            "playback_timeout": 10,
-            "force_stop_before_play": True,
-            "playback_delay": 0.2,
-            "max_retry_attempts": 3,
+            "play_in_microphone": True
         }
     }
 

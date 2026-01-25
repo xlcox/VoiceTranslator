@@ -3,6 +3,8 @@ import logging
 import os
 import sys
 
+from .constants import LOGS_DIR
+
 
 def setup_logger(name, log_level_str="INFO"):
     """Создает и настраивает логгер с указанным именем и уровнем логирования.
@@ -16,9 +18,8 @@ def setup_logger(name, log_level_str="INFO"):
     """
     level = getattr(logging, log_level_str.upper(), logging.INFO)
 
-    log_dir = "logs"
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    if not os.path.exists(LOGS_DIR):
+        os.makedirs(LOGS_DIR)
 
     formatter = logging.Formatter(
         fmt="%(asctime)s | %(levelname)-7s | %(name)-15s | %(message)s",
@@ -31,7 +32,7 @@ def setup_logger(name, log_level_str="INFO"):
     # Не очищаем хендлеры если они уже есть (для предотвращения дублирования)
     if not logger.handlers:
         file_handler = logging.FileHandler(
-            os.path.join(log_dir, "app.log"),
+            os.path.join(LOGS_DIR, "app.log"),
             encoding='utf-8'
         )
         file_handler.setFormatter(formatter)

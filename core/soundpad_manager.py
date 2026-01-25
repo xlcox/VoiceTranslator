@@ -8,6 +8,13 @@ from pathlib import Path
 
 import soundfile as sf
 
+from .constants import (
+    SOUNDPAD_ENABLED, SOUNDPAD_AUTO_START, SOUNDPAD_PATH,
+    SOUNDPAD_CLEANUP_AFTER_PLAY, SOUNDPAD_PLAYBACK_TIMEOUT,
+    SOUNDPAD_FORCE_STOP_BEFORE_PLAY, SOUNDPAD_PLAYBACK_DELAY,
+    SOUNDPAD_MAX_RETRY_ATTEMPTS
+)
+
 SOUNDPAD_AVAILABLE = False
 try:
     from soundpad_control import SoundpadRemoteControl
@@ -39,14 +46,13 @@ class SoundpadManager:
         self._shutdown = False
 
         # Кеширование настроек для производительности
-        self._enabled = self.cfg.get("enabled", True)
-        self._auto_start = self.cfg.get("auto_start", True)
-        self._soundpad_path = self.cfg.get("soundpad_path",
-                                           "SoundPad/Soundpad.exe")
+        self._enabled = SOUNDPAD_ENABLED
+        self._auto_start = SOUNDPAD_AUTO_START
+        self._soundpad_path = SOUNDPAD_PATH
         self._play_in_speakers = self.cfg.get("play_in_speakers", True)
         self._play_in_microphone = self.cfg.get("play_in_microphone", True)
-        self._cleanup_after_play = self.cfg.get("cleanup_after_play", True)
-        self._playback_timeout = self.cfg.get("playback_timeout", 10)
+        self._cleanup_after_play = SOUNDPAD_CLEANUP_AFTER_PLAY
+        self._playback_timeout = SOUNDPAD_PLAYBACK_TIMEOUT
 
         if not SOUNDPAD_AVAILABLE:
             self.logger.warning(
@@ -277,7 +283,7 @@ class SoundpadManager:
             self.logger.error("SoundPad disabled")
             return False
 
-        max_retries = self.cfg.get("max_retry_attempts", 3)
+        max_retries = SOUNDPAD_MAX_RETRY_ATTEMPTS
 
         for attempt in range(max_retries):
             try:
@@ -310,10 +316,10 @@ class SoundpadManager:
         Returns:
             bool: Результат воспроизведения
         """
-        if self.cfg.get("force_stop_before_play", True):
+        if SOUNDPAD_FORCE_STOP_BEFORE_PLAY:
             self.stop_playback()
 
-        delay = self.cfg.get("playback_delay", 0.2)
+        delay = SOUNDPAD_PLAYBACK_DELAY
         if delay > 0:
             time.sleep(delay)
 
