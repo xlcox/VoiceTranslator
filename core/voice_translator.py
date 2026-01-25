@@ -21,7 +21,8 @@ from .constants import (
     AUDIO_MAX_RECORDING_DURATION, AUDIO_BLOCKSIZE,
     HOTKEY_MIN_PRESS_DURATION, HOTKEY_DEBOUNCE_DELAY,
     PLAYBACK_WAIT_BUFFER, PLAYBACK_MAX_TIMEOUT,
-    MODELS_DIR, TRANSLATION_ENGINE
+    MODELS_DIR, TRANSLATION_ENGINE,
+    DEFAULT_TTS_VOICES, DEFAULT_TTS_RATE, DEFAULT_TTS_VOLUME
 )
 
 
@@ -85,71 +86,147 @@ class VoiceTranslator:
             (self._max_recording_duration * self._fs) / self._blocksize
         )
 
+        # Автоматически выбираем голос, если не задан
+        if not self.cfg['tts'].get('voice') or self.cfg['tts'][
+            'voice'].strip() == "":
+            target_lang = self.cfg['translation']['target_lang']
+            voice = DEFAULT_TTS_VOICES.get(target_lang)
+            if voice:
+                self.cfg['tts']['voice'] = voice
+                self.logger.info(
+                    f"Auto-selected TTS voice for {target_lang}: {voice}")
+            else:
+                self.logger.warning(
+                    f"No default TTS voice for language: {target_lang}")
+
         self.logger.debug(f"Temp file: {self._temp_file}")
+        self.logger.debug(
+            f"Source language: {self.cfg['translation']['source_lang']}")
+        self.logger.debug(
+            f"Target language: {self.cfg['translation']['target_lang']}")
+        self.logger.debug(f"TTS voice: {self.cfg['tts']['voice']}")
 
     def _init_translator(self):
         """Инициализирует Argos Translate с локальными моделями."""
         source = self.cfg['translation']['source_lang']
         target = self.cfg['translation']['target_lang']
 
-        self.logger.info(f"Initializing translator: {source}→{target}")
+        self.logger.info(f"Initializing translator: {source} → {target}")
 
         try:
+            # Проверяем установленные языки
             installed_languages = argostranslate.translate.get_installed_languages()
-            from_lang = next(
-                (l for l in installed_languages if l.code == source), None
-            )
-            to_lang = next(
-                (l for l in installed_languages if l.code == target), None
-            )
+
+            # Ищем нужную пару языков
+            from_lang = None
+            to_lang = None
+
+            for lang in installed_languages:
+                if lang.code == source:
+                    from_lang = lang
+                if lang.code == target:
+                    to_lang = lang
 
             if from_lang and to_lang:
-                self.translator = (from_lang, to_lang)
-                self.logger.info("Translator ready")
-                return
+                # Проверяем, есть ли перевод между этими языками
+                translation = from_lang.get_translation(to_lang)
+                if translation:
+                    self.translator = (from_lang, to_lang)
+                    self.logger.info(f"Found translation: {source} → {target}")
+                    return
+                else:
+                    self.logger.info(
+                        f"Translation {source} → {target} not installed")
 
+            # Если перевод не установлен, пытаемся найти и установить модель
             self.logger.info(
                 f"Model {source}→{target} not found, installing...")
 
-            available_packages = argostranslate.package.get_available_packages()
-            needed_package = next(
-                (p for p in available_packages
-                 if p.from_code == source and p.to_code == target),
-                None
-            )
+            # Сначала проверяем локальные модели
+            models_dir = Path(MODELS_DIR)
 
-            if needed_package:
-                self.logger.info(f"Found model: {needed_package}")
-                needed_package.install()
-                self.logger.info("Model installed")
+            # Формируем имя файла модели
+            model_file = f"translate-{source}_{target}-1_7.argosmodel"
+            model_path = models_dir / model_file
+
+            if model_path.exists():
+                self.logger.info(f"Using local model: {model_file}")
+                argostranslate.package.install_from_path(str(model_path))
             else:
-                models_dir = Path(MODELS_DIR)
-                model_file = f"translate-{source}_{target}-1_7.argosmodel"
-                model_path = models_dir / model_file
+                # Проверяем онлайн доступные пакеты
+                available_packages = argostranslate.package.get_available_packages()
+                needed_package = None
 
-                if model_path.exists():
-                    self.logger.info(f"Using local model: {model_file}")
-                    argostranslate.package.install_from_path(str(model_path))
+                for pkg in available_packages:
+                    if pkg.from_code == source and pkg.to_code == target:
+                        needed_package = pkg
+                        break
+
+                if needed_package:
+                    self.logger.info(f"Found online model: {needed_package}")
+                    needed_package.install()
+                    self.logger.info("Model installed")
                 else:
-                    raise RuntimeError(
-                        f"Translation model {source}→{target} not found. "
-                        f"Check {model_file} in {MODELS_DIR}/ directory"
-                    )
+                    # Пробуем обратную модель
+                    reverse_model_file = f"translate-{target}_{source}-1_7.argosmodel"
+                    reverse_model_path = models_dir / reverse_model_file
 
+                    if reverse_model_path.exists():
+                        self.logger.warning(
+                            f"Direct model not found, trying to use reverse model: {reverse_model_file}")
+                        # Устанавливаем обратную модель, но будем использовать её в обратном направлении
+                        argostranslate.package.install_from_path(
+                            str(reverse_model_path))
+                    else:
+                        raise RuntimeError(
+                            f"Translation model {source}→{target} not found. "
+                            f"Check {model_file} or {reverse_model_file} in {MODELS_DIR}/ directory"
+                        )
+
+            # После установки проверяем снова
             installed_languages = argostranslate.translate.get_installed_languages()
-            from_lang = next(
-                (l for l in installed_languages if l.code == source), None
-            )
-            to_lang = next(
-                (l for l in installed_languages if l.code == target), None
-            )
+            from_lang = None
+            to_lang = None
+
+            for lang in installed_languages:
+                if lang.code == source:
+                    from_lang = lang
+                if lang.code == target:
+                    to_lang = lang
 
             if not from_lang or not to_lang:
+                # Если языки установлены, но перевода между ними нет, создаём цепочку переводов
+                self.logger.warning(
+                    f"No direct translation {source}→{target}, trying to find chain")
+
+                # Пытаемся найти цепочку через английский
+                if source != "en" and target != "en":
+                    self.logger.info(f"Trying chain: {source} → en → {target}")
+
+                    # Ищем английский язык
+                    en_lang = None
+                    for lang in installed_languages:
+                        if lang.code == "en":
+                            en_lang = lang
+                            break
+
+                    if en_lang and from_lang and to_lang:
+                        # Проверяем наличие переводов source→en и en→target
+                        source_to_en = from_lang.get_translation(en_lang)
+                        en_to_target = en_lang.get_translation(to_lang)
+
+                        if source_to_en and en_to_target:
+                            self.translator = (
+                            from_lang, to_lang, en_lang)  # Тройной перевод
+                            self.logger.info(
+                                f"Using chain translation: {source} → en → {target}")
+                            return
+
                 raise RuntimeError(
-                    f"Languages not found after installation: {source}→{target}")
+                    f"Languages found but no translation available: {source}→{target}")
 
             self.translator = (from_lang, to_lang)
-            self.logger.info("Translator initialized")
+            self.logger.info(f"Translator initialized: {source} → {target}")
 
         except Exception as e:
             self.logger.error(f"Translator init failed: {e}")
@@ -293,15 +370,51 @@ class VoiceTranslator:
             return text
 
         try:
-            from_lang, to_lang = self.translator
-            translation = from_lang.get_translation(to_lang)
+            if len(self.translator) == 2:
+                # Прямой перевод
+                from_lang, to_lang = self.translator
+                translation = from_lang.get_translation(to_lang)
 
-            if translation:
-                return translation.translate(text)
-            else:
+                if translation:
+                    translated_text = translation.translate(text)
+                    self.logger.debug(
+                        f"Direct translation: {text[:50]}... → {translated_text[:50]}...")
+                    return translated_text
+                else:
+                    self.logger.warning(
+                        f"No direct translation {from_lang.code}→{to_lang.code}")
+                    return text
+
+            elif len(self.translator) == 3:
+                # Цепочка переводов (например, через английский)
+                from_lang, to_lang, middle_lang = self.translator
+
+                # Сначала переводим на промежуточный язык
+                first_translation = from_lang.get_translation(middle_lang)
+                if not first_translation:
+                    self.logger.error(
+                        f"No translation {from_lang.code}→{middle_lang.code}")
+                    return text
+
+                # Затем с промежуточного на целевой
+                second_translation = middle_lang.get_translation(to_lang)
+                if not second_translation:
+                    self.logger.error(
+                        f"No translation {middle_lang.code}→{to_lang.code}")
+                    return text
+
+                intermediate = first_translation.translate(text)
+                final = second_translation.translate(intermediate)
+
                 self.logger.debug(
-                    f"Direct translation {from_lang.code}→{to_lang.code} not available")
+                    f"Chain translation: {text[:50]}... → {final[:50]}...")
+                return final
+
+            else:
+                self.logger.error(
+                    f"Invalid translator configuration: {self.translator}")
                 return text
+
         except Exception as e:
             self.logger.error(f"Translation error: {e}")
             return text
@@ -319,12 +432,23 @@ class VoiceTranslator:
             return None
 
         tts_cfg = self.cfg['tts']
+
+        # Проверяем, задан ли голос
+        if not tts_cfg.get('voice') or tts_cfg['voice'].strip() == "":
+            target_lang = self.cfg['translation']['target_lang']
+            voice = DEFAULT_TTS_VOICES.get(target_lang)
+            if not voice:
+                self.logger.error(f"No TTS voice for language: {target_lang}")
+                return None
+            tts_cfg['voice'] = voice
+            self.logger.info(f"Using auto-selected voice: {voice}")
+
         try:
             communicate = edge_tts.Communicate(
                 text,
                 voice=tts_cfg['voice'],
-                volume=tts_cfg['volume'],
-                rate=tts_cfg['rate']
+                volume=tts_cfg.get('volume', DEFAULT_TTS_VOLUME),
+                rate=tts_cfg.get('rate', DEFAULT_TTS_RATE)
             )
             await communicate.save(self._temp_file)
             return self._temp_file if os.path.exists(self._temp_file) else None
@@ -371,13 +495,15 @@ class VoiceTranslator:
                 self.logger.info("No speech detected")
                 return
 
-            self.logger.info(f"Recognized: {text}")
+            self.logger.info(
+                f"Recognized ({self.cfg['translation']['source_lang']}): {text}")
 
             try:
                 translated = await loop.run_in_executor(
                     self._executor, self._translate_sync, text
                 )
-                self.logger.info(f"Translated: {translated}")
+                self.logger.info(
+                    f"Translated ({self.cfg['translation']['target_lang']}): {translated}")
             except Exception as e:
                 self.logger.error(f"Translation failed: {e}")
                 return
@@ -473,7 +599,13 @@ class VoiceTranslator:
             return
 
         hotkey = self.cfg['app']['hotkey']
+        source_lang = self.cfg['translation']['source_lang']
+        target_lang = self.cfg['translation']['target_lang']
+        voice = self.cfg['tts']['voice']
+
         self.logger.info(f"Ready. Hold '{hotkey}' to record")
+        self.logger.info(f"Translation: {source_lang} → {target_lang}")
+        self.logger.info(f"TTS Voice: {voice}")
 
         self.loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()

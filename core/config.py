@@ -3,7 +3,8 @@ import json
 import logging
 from pathlib import Path
 
-from .constants import CONFIG_FILE
+from .constants import CONFIG_FILE, DEFAULT_TTS_VOICES, DEFAULT_TTS_RATE, \
+    DEFAULT_TTS_VOLUME
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,10 @@ def load_config(filename=CONFIG_FILE):
             "whisper_model": "small"
         },
         "tts": {
-            "voice": "zh-CN-YunxiNeural",
-            "rate": "-20%",
-            "volume": "+30%"
+            "voice": "",
+            # Пустая строка - будет выбран голос автоматически по target_lang
+            "rate": DEFAULT_TTS_RATE,
+            "volume": DEFAULT_TTS_VOLUME
         },
         "soundpad": {
             "play_in_speakers": True,
@@ -56,6 +58,21 @@ def load_config(filename=CONFIG_FILE):
             user_config = json.load(f)
 
         merged_config = _merge_configs(default_config, user_config)
+
+        # Автоматически выбираем голос TTS, если не задан
+        target_lang = merged_config["translation"]["target_lang"]
+        tts_config = merged_config["tts"]
+
+        if not tts_config.get("voice") or tts_config["voice"].strip() == "":
+            voice = DEFAULT_TTS_VOICES.get(target_lang, "")
+            if voice:
+                tts_config["voice"] = voice
+                logger.info(
+                    f"Auto-selected TTS voice for {target_lang}: {voice}")
+            else:
+                logger.warning(
+                    f"No default TTS voice for language: {target_lang}")
+
         logger.debug(f"Loaded config from: {config_path.absolute()}")
         return merged_config
     except json.JSONDecodeError as e:
