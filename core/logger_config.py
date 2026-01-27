@@ -8,10 +8,10 @@ from core.constants import LOGS_DIR
 
 def setup_logger(name, log_level_str="INFO"):
     """Создает и настраивает логгер с указанным именем и уровнем логирования.
+
     Args:
         name: Имя логгера
-        log_level_str: Уровень логирования (DEBUG, INFO, WARNING,
-         ERROR, CRITICAL)
+        log_level_str: Уровень логирования (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
     Returns:
         logging.Logger: Настроенный логгер
@@ -39,8 +39,7 @@ def setup_logger(name, log_level_str="INFO"):
 
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
-        stream_handler.setLevel(
-            level)
+        stream_handler.setLevel(level)
         logger.addHandler(stream_handler)
 
     return logger

@@ -30,7 +30,6 @@ def load_config(filename=CONFIG_FILE):
         },
         "tts": {
             "voice": "",
-            # Пустая строка - будет выбран голос автоматически по target_lang
             "rate": DEFAULT_TTS_RATE,
             "volume": DEFAULT_TTS_VOLUME
         },
@@ -59,7 +58,6 @@ def load_config(filename=CONFIG_FILE):
 
         merged_config = _merge_configs(default_config, user_config)
 
-        # Автоматически выбираем голос TTS, если не задан
         target_lang = merged_config["translation"]["target_lang"]
         tts_config = merged_config["tts"]
 
@@ -85,8 +83,6 @@ def load_config(filename=CONFIG_FILE):
 
 def _merge_configs(default, user):
     """Рекурсивно объединяет две конфигурации.
-
-    Сохраняет значения по умолчанию для отсутствующих ключей.
 
     Args:
         default: Конфигурация по умолчанию

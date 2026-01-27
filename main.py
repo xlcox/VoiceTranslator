@@ -1,5 +1,6 @@
 """Основной файл приложения для голосового перевода с воспроизведением через SoundPad."""
 import asyncio
+import logging
 import signal
 import sys
 
@@ -22,13 +23,10 @@ def signal_handler(signum, frame):
 
 async def async_main():
     """Асинхронная основная функция."""
-    # Загружаем конфиг первым делом
     config = load_config()
 
-    # Настраиваем логгеры для каждого модуля с общим уровнем логирования
     log_level = config["app"]["log_level"]
 
-    # Создаем логгеры для каждого модуля
     config_logger = setup_logger("Config", log_level)
     main_logger = setup_logger("Main", log_level)
     soundpad_logger = setup_logger("SoundPad", log_level)
@@ -43,14 +41,15 @@ async def async_main():
     app = None
 
     try:
-        # Передаем логгеры в соответствующие модули
         soundpad_mgr = SoundpadManager(config, soundpad_logger)
         app = VoiceTranslator(config, soundpad_mgr, translator_logger)
         await app.run()
     except KeyboardInterrupt:
         main_logger.info("Interrupted by user")
     except Exception as e:
-        main_logger.error(f"Critical error: {e}", exc_info=True)
+        main_logger.error(f"Critical error: {e}")
+        if main_logger.level <= logging.DEBUG:
+            main_logger.error("Full traceback:", exc_info=True)
     finally:
         main_logger.info("-" * 50)
         if app:

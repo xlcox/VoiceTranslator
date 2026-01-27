@@ -3,7 +3,6 @@
 # Настройки аудио
 AUDIO_SAMPLE_RATE = 16000  # Частота дискретизации для Whisper (Гц)
 AUDIO_MIN_DURATION = 0.8  # Минимальная длительность записи для обработки (сек)
-AUDIO_PLAYBACK_GAIN = 1.5  # Коэффициент усиления воспроизведения
 AUDIO_TEMP_FILE = "tts_temp.wav"  # Временный файл для TTS
 
 # Настройки SoundPad
@@ -13,9 +12,6 @@ SOUNDPAD_PLAYBACK_TIMEOUT = 10  # Таймаут ожидания воспрои
 SOUNDPAD_FORCE_STOP_BEFORE_PLAY = True  # Останавливать текущее воспроизведение перед новым
 SOUNDPAD_PLAYBACK_DELAY = 0.2  # Задержка перед воспроизведением (сек)
 SOUNDPAD_MAX_RETRY_ATTEMPTS = 3  # Максимальное количество попыток воспроизведения
-
-# Настройки перевода
-TRANSLATION_ENGINE = "argos"  # Используемый движок перевода
 
 # Параметры обработки аудио
 AUDIO_SILENCE_THRESHOLD = 0.01  # Порог определения тишины (от 0 до 1)
@@ -38,19 +34,19 @@ CONFIG_FILE = "config.json"  # Файл конфигурации
 
 # Настройки TTS (голоса по умолчанию для языков)
 DEFAULT_TTS_VOICES = {
-    "ru": "ru-RU-SvetlanaNeural",  # Русский мужской голос
-    "zh": "zh-CN-YunxiNeural",  # Китайский мужской голос
-    "en": "en-US-ChristopherNeural",  # Английский мужской голос
-    "ja": "ja-JP-KeitaNeural",  # Японский мужской голос
-    "ko": "ko-KR-InJoonNeural",  # Корейский мужской голос
-    "es": "es-ES-AlvaroNeural",  # Испанский мужской голос
-    "fr": "fr-FR-HenriNeural",  # Французский мужской голос
-    "de": "de-DE-ConradNeural",  # Немецкий мужской голос
-    "it": "it-IT-DiegoNeural",  # Итальянский мужской голос
-    "pt": "pt-BR-AntonioNeural",  # Португальский мужской голос
-    "ar": "ar-SA-HamedNeural",  # Арабский мужской голос
+    "ru": "ru-RU-SvetlanaNeural",
+    "zh": "zh-CN-YunxiNeural",
+    "en": "en-US-ChristopherNeural",
+    "ja": "ja-JP-KeitaNeural",
+    "ko": "ko-KR-InJoonNeural",
+    "es": "es-ES-AlvaroNeural",
+    "fr": "fr-FR-HenriNeural",
+    "de": "de-DE-ConradNeural",
+    "it": "it-IT-DiegoNeural",
+    "pt": "pt-BR-AntonioNeural",
+    "ar": "ar-SA-HamedNeural",
 }
 
-# Настройки TTS по умолчанию (если не заданы в конфиге)
+# Настройки TTS по умолчанию
 DEFAULT_TTS_RATE = "-20%"  # Скорость воспроизведения по умолчанию
 DEFAULT_TTS_VOLUME = "+30%"  # Громкость по умолчанию

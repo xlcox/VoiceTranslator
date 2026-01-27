@@ -17,7 +17,7 @@ import argostranslate.translate
 
 from core.constants import (
     AUDIO_SAMPLE_RATE, AUDIO_MIN_DURATION,
-    AUDIO_TEMP_FILE, AUDIO_SILENCE_THRESHOLD, AUDIO_TRIM_TAIL_DURATION,
+    AUDIO_TEMP_FILE, AUDIO_TRIM_TAIL_DURATION,
     AUDIO_MAX_RECORDING_DURATION, AUDIO_BLOCKSIZE,
     HOTKEY_MIN_PRESS_DURATION, HOTKEY_DEBOUNCE_DELAY,
     PLAYBACK_WAIT_BUFFER, PLAYBACK_MAX_TIMEOUT,
@@ -55,9 +55,7 @@ class VoiceTranslator:
         self._buffer_lock = threading.Lock()
 
         self._hotkey_pressed_time = 0
-        self._min_hotkey_press = HOTKEY_MIN_PRESS_DURATION
         self._last_release_time = 0
-        self._debounce_delay = HOTKEY_DEBOUNCE_DELAY
 
         self._executor = ThreadPoolExecutor(
             max_workers=3,
@@ -74,19 +72,13 @@ class VoiceTranslator:
         self.translator = None
         self._init_translator()
 
-        self._fs = AUDIO_SAMPLE_RATE
-        self._min_duration = AUDIO_MIN_DURATION
         self._temp_file = str(Path(AUDIO_TEMP_FILE).resolve())
 
-        self._silence_threshold = AUDIO_SILENCE_THRESHOLD
-        self._trim_tail_duration = AUDIO_TRIM_TAIL_DURATION
-        self._max_recording_duration = AUDIO_MAX_RECORDING_DURATION
-        self._blocksize = AUDIO_BLOCKSIZE
         self._max_buffer_blocks = int(
-            (self._max_recording_duration * self._fs) / self._blocksize
+            (
+                        AUDIO_MAX_RECORDING_DURATION * AUDIO_SAMPLE_RATE) / AUDIO_BLOCKSIZE
         )
 
-        # Автоматически выбираем голос, если не задан
         if not self.cfg['tts'].get('voice') or self.cfg['tts'][
             'voice'].strip() == "":
             target_lang = self.cfg['translation']['target_lang']
@@ -111,79 +103,22 @@ class VoiceTranslator:
         source = self.cfg['translation']['source_lang']
         target = self.cfg['translation']['target_lang']
 
-        self.logger.info(f"Initializing translator: {source} → {target}")
-
         try:
-            # Проверяем установленные языки
-            installed_languages = argostranslate.translate.get_installed_languages()
-
-            # Ищем нужную пару языков
-            from_lang = None
-            to_lang = None
-
-            for lang in installed_languages:
-                if lang.code == source:
-                    from_lang = lang
-                if lang.code == target:
-                    to_lang = lang
-
-            if from_lang and to_lang:
-                # Проверяем, есть ли перевод между этими языками
-                translation = from_lang.get_translation(to_lang)
-                if translation:
-                    self.translator = (from_lang, to_lang)
-                    self.logger.info(f"Found translation: {source} → {target}")
-                    return
-                else:
-                    self.logger.info(
-                        f"Translation {source} → {target} not installed")
-
-            # Если перевод не установлен, пытаемся найти и установить модель
-            self.logger.info(
-                f"Model {source}→{target} not found, installing...")
-
-            # Сначала проверяем локальные модели
             models_dir = Path(MODELS_DIR)
-
-            # Формируем имя файла модели
             model_file = f"translate-{source}_{target}-1_7.argosmodel"
             model_path = models_dir / model_file
 
-            if model_path.exists():
-                self.logger.info(f"Using local model: {model_file}")
-                argostranslate.package.install_from_path(str(model_path))
-            else:
-                # Проверяем онлайн доступные пакеты
-                available_packages = argostranslate.package.get_available_packages()
-                needed_package = None
+            if not model_path.exists():
+                self.logger.error(
+                    f"Translation model not found: {model_file}\n"
+                    f"Please download the model and place it in {MODELS_DIR}/ directory.\n"
+                    f"You can find models at: https://www.argosopentech.com/argospm/index/"
+                )
+                return
 
-                for pkg in available_packages:
-                    if pkg.from_code == source and pkg.to_code == target:
-                        needed_package = pkg
-                        break
+            self.logger.info(f"Installing model: {model_file}")
+            argostranslate.package.install_from_path(str(model_path))
 
-                if needed_package:
-                    self.logger.info(f"Found online model: {needed_package}")
-                    needed_package.install()
-                    self.logger.info("Model installed")
-                else:
-                    # Пробуем обратную модель
-                    reverse_model_file = f"translate-{target}_{source}-1_7.argosmodel"
-                    reverse_model_path = models_dir / reverse_model_file
-
-                    if reverse_model_path.exists():
-                        self.logger.warning(
-                            f"Direct model not found, trying to use reverse model: {reverse_model_file}")
-                        # Устанавливаем обратную модель, но будем использовать её в обратном направлении
-                        argostranslate.package.install_from_path(
-                            str(reverse_model_path))
-                    else:
-                        raise RuntimeError(
-                            f"Translation model {source}→{target} not found. "
-                            f"Check {model_file} or {reverse_model_file} in {MODELS_DIR}/ directory"
-                        )
-
-            # После установки проверяем снова
             installed_languages = argostranslate.translate.get_installed_languages()
             from_lang = None
             to_lang = None
@@ -195,49 +130,28 @@ class VoiceTranslator:
                     to_lang = lang
 
             if not from_lang or not to_lang:
-                # Если языки установлены, но перевода между ними нет, создаём цепочку переводов
-                self.logger.warning(
-                    f"No direct translation {source}→{target}, trying to find chain")
+                self.logger.error(
+                    f"Languages {source} or {target} not found after installation")
+                return
 
-                # Пытаемся найти цепочку через английский
-                if source != "en" and target != "en":
-                    self.logger.info(f"Trying chain: {source} → en → {target}")
-
-                    # Ищем английский язык
-                    en_lang = None
-                    for lang in installed_languages:
-                        if lang.code == "en":
-                            en_lang = lang
-                            break
-
-                    if en_lang and from_lang and to_lang:
-                        # Проверяем наличие переводов source→en и en→target
-                        source_to_en = from_lang.get_translation(en_lang)
-                        en_to_target = en_lang.get_translation(to_lang)
-
-                        if source_to_en and en_to_target:
-                            self.translator = (
-                                from_lang, to_lang, en_lang)  # Тройной перевод
-                            self.logger.info(
-                                f"Using chain translation: {source} → en → {target}")
-                            return
-
-                raise RuntimeError(
-                    f"Languages found but no translation available: {source}→{target}")
+            translation = from_lang.get_translation(to_lang)
+            if not translation:
+                self.logger.error(
+                    f"Translation {source}→{target} not available")
+                return
 
             self.translator = (from_lang, to_lang)
-            self.logger.info(f"Translator initialized: {source} → {target}")
+            self.logger.info(f"Translator ready: {source} → {target}")
 
         except Exception as e:
             self.logger.error(f"Translator init failed: {e}")
-            raise RuntimeError(f"Translator initialization failed: {e}")
+            self.translator = None
 
     def _load_whisper_model(self):
         """Загружает модель Whisper в фоновом режиме."""
         try:
             self.model = whisper.load_model(
-                self.cfg['translation']['whisper_model']
-            )
+                self.cfg['translation']['whisper_model'])
             self._model_loading = False
             self.logger.info("Whisper model loaded")
         except Exception as e:
@@ -275,7 +189,7 @@ class VoiceTranslator:
             new_state: Новое состояние
 
         Returns:
-            bool: True если изменение успешно, False в противном случае
+            bool: True если изменение успешно
         """
         with self._state_lock:
             if self._state == expected_state:
@@ -326,8 +240,7 @@ class VoiceTranslator:
                     self.audio_buffer.append(indata.copy())
                 elif len(self.audio_buffer) == self._max_buffer_blocks:
                     self.logger.warning(
-                        f"Recording limit reached ({self._max_recording_duration}s)"
-                    )
+                        f"Recording limit reached ({AUDIO_MAX_RECORDING_DURATION}s)")
 
     def _transcribe(self, audio):
         """Распознает речь в аудиоданных с помощью Whisper.
@@ -370,49 +283,17 @@ class VoiceTranslator:
             return text
 
         try:
-            if len(self.translator) == 2:
-                # Прямой перевод
-                from_lang, to_lang = self.translator
-                translation = from_lang.get_translation(to_lang)
+            from_lang, to_lang = self.translator
+            translation = from_lang.get_translation(to_lang)
 
-                if translation:
-                    translated_text = translation.translate(text)
-                    self.logger.debug(
-                        f"Direct translation: {text[:50]}... → {translated_text[:50]}...")
-                    return translated_text
-                else:
-                    self.logger.warning(
-                        f"No direct translation {from_lang.code}→{to_lang.code}")
-                    return text
-
-            elif len(self.translator) == 3:
-                # Цепочка переводов (например, через английский)
-                from_lang, to_lang, middle_lang = self.translator
-
-                # Сначала переводим на промежуточный язык
-                first_translation = from_lang.get_translation(middle_lang)
-                if not first_translation:
-                    self.logger.error(
-                        f"No translation {from_lang.code}→{middle_lang.code}")
-                    return text
-
-                # Затем с промежуточного на целевой
-                second_translation = middle_lang.get_translation(to_lang)
-                if not second_translation:
-                    self.logger.error(
-                        f"No translation {middle_lang.code}→{to_lang.code}")
-                    return text
-
-                intermediate = first_translation.translate(text)
-                final = second_translation.translate(intermediate)
-
+            if translation:
+                translated_text = translation.translate(text)
                 self.logger.debug(
-                    f"Chain translation: {text[:50]}... → {final[:50]}...")
-                return final
-
+                    f"Translation: {text[:50]}... → {translated_text[:50]}...")
+                return translated_text
             else:
-                self.logger.error(
-                    f"Invalid translator configuration: {self.translator}")
+                self.logger.warning(
+                    f"Translation {from_lang.code}→{to_lang.code} unavailable")
                 return text
 
         except Exception as e:
@@ -433,7 +314,6 @@ class VoiceTranslator:
 
         tts_cfg = self.cfg['tts']
 
-        # Проверяем, задан ли голос
         if not tts_cfg.get('voice') or tts_cfg['voice'].strip() == "":
             target_lang = self.cfg['translation']['target_lang']
             voice = DEFAULT_TTS_VOICES.get(target_lang)
@@ -477,19 +357,18 @@ class VoiceTranslator:
                 audio = np.concatenate(self.audio_buffer, axis=0).flatten()
                 self.audio_buffer.clear()
 
-            audio = self._trim_silence_from_end(audio, self._fs)
-            duration = len(audio) / self._fs
+            audio = self._trim_silence_from_end(audio, AUDIO_SAMPLE_RATE)
+            duration = len(audio) / AUDIO_SAMPLE_RATE
 
-            if duration < self._min_duration:
+            if duration < AUDIO_MIN_DURATION:
                 self.logger.info(f"Recording too short: {duration:.1f}s")
                 return
 
             self.logger.info(f"Processing ({duration:.1f}s)...")
 
             loop = asyncio.get_running_loop()
-            text = await loop.run_in_executor(
-                self._executor, self._transcribe, audio
-            )
+            text = await loop.run_in_executor(self._executor, self._transcribe,
+                                              audio)
 
             if not text:
                 self.logger.info("No speech detected")
@@ -499,9 +378,9 @@ class VoiceTranslator:
                 f"Recognized ({self.cfg['translation']['source_lang']}): {text}")
 
             try:
-                translated = await loop.run_in_executor(
-                    self._executor, self._translate_sync, text
-                )
+                translated = await loop.run_in_executor(self._executor,
+                                                        self._translate_sync,
+                                                        text)
                 self.logger.info(
                     f"Translated ({self.cfg['translation']['target_lang']}): {translated}")
             except Exception as e:
@@ -550,7 +429,7 @@ class VoiceTranslator:
         """
         if event.event_type == keyboard.KEY_DOWN:
             if (
-                    time.time() - self._last_release_time > self._debounce_delay and
+                    time.time() - self._last_release_time > HOTKEY_DEBOUNCE_DELAY and
                     not self._model_loading and not self._model_load_failed):
 
                 if self._change_state(AppState.IDLE, AppState.RECORDING):
@@ -565,7 +444,7 @@ class VoiceTranslator:
             self._last_release_time = current_time
 
             if self._get_state() == AppState.RECORDING:
-                if press_duration >= self._min_hotkey_press:
+                if press_duration >= HOTKEY_MIN_PRESS_DURATION:
                     if self._change_state(AppState.RECORDING,
                                           AppState.PROCESSING):
                         self.logger.info(
@@ -573,8 +452,7 @@ class VoiceTranslator:
 
                         if hasattr(self, 'loop') and self.loop.is_running():
                             asyncio.run_coroutine_threadsafe(
-                                self.process_audio(), self.loop
-                            )
+                                self.process_audio(), self.loop)
                         else:
                             self.logger.error("Event loop unavailable")
                             self._change_state(AppState.PROCESSING,
@@ -591,6 +469,10 @@ class VoiceTranslator:
             self.logger.error("Whisper model failed to load")
             return
 
+        if not self.translator:
+            self.logger.error("Translator not initialized. Cannot start.")
+            return
+
         while self._model_loading:
             await asyncio.sleep(0.5)
 
@@ -599,12 +481,9 @@ class VoiceTranslator:
             return
 
         hotkey = self.cfg['app']['hotkey']
-        source_lang = self.cfg['translation']['source_lang']
-        target_lang = self.cfg['translation']['target_lang']
         voice = self.cfg['tts']['voice']
 
         self.logger.info(f"Ready. Hold '{hotkey}' to record")
-        self.logger.info(f"Translation: {source_lang} → {target_lang}")
         self.logger.info(f"TTS Voice: {voice}")
 
         self.loop = asyncio.get_running_loop()
@@ -619,11 +498,11 @@ class VoiceTranslator:
 
         try:
             with sd.InputStream(
-                    samplerate=self._fs,
+                    samplerate=AUDIO_SAMPLE_RATE,
                     channels=1,
                     dtype='float32',
                     callback=self.audio_callback,
-                    blocksize=self._blocksize
+                    blocksize=AUDIO_BLOCKSIZE
             ):
                 await self._stop_event.wait()
         except Exception as e:
