@@ -1,0 +1,20 @@
+{
+  "app": {
+    "log_level": "INFO",
+    "hotkey": "page up"
+  },
+  "translation": {
+    "source_lang": "ru",
+    "target_lang": "zh",
+    "whisper_model": "small"
+  },
+  "tts": {
+    "voice": "",
+    "rate": "+1%",
+    "volume": "+30%"
+  },
+  "soundpad": {
+    "play_in_speakers": true,
+    "play_in_microphone": true
+  }
+}
