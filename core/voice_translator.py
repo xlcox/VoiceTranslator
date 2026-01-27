@@ -15,13 +15,13 @@ import whisper
 import argostranslate.package
 import argostranslate.translate
 
-from .constants import (
-    AUDIO_SAMPLE_RATE, AUDIO_MIN_DURATION, AUDIO_PLAYBACK_GAIN,
+from core.constants import (
+    AUDIO_SAMPLE_RATE, AUDIO_MIN_DURATION,
     AUDIO_TEMP_FILE, AUDIO_SILENCE_THRESHOLD, AUDIO_TRIM_TAIL_DURATION,
     AUDIO_MAX_RECORDING_DURATION, AUDIO_BLOCKSIZE,
     HOTKEY_MIN_PRESS_DURATION, HOTKEY_DEBOUNCE_DELAY,
     PLAYBACK_WAIT_BUFFER, PLAYBACK_MAX_TIMEOUT,
-    MODELS_DIR, TRANSLATION_ENGINE,
+    MODELS_DIR,
     DEFAULT_TTS_VOICES, DEFAULT_TTS_RATE, DEFAULT_TTS_VOLUME
 )
 
@@ -217,7 +217,7 @@ class VoiceTranslator:
 
                         if source_to_en and en_to_target:
                             self.translator = (
-                            from_lang, to_lang, en_lang)  # Тройной перевод
+                                from_lang, to_lang, en_lang)  # Тройной перевод
                             self.logger.info(
                                 f"Using chain translation: {source} → en → {target}")
                             return

@@ -3,15 +3,15 @@ import logging
 import os
 import sys
 
-from .constants import LOGS_DIR
+from core.constants import LOGS_DIR
 
 
 def setup_logger(name, log_level_str="INFO"):
     """Создает и настраивает логгер с указанным именем и уровнем логирования.
-
     Args:
         name: Имя логгера
-        log_level_str: Уровень логирования (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        log_level_str: Уровень логирования (DEBUG, INFO, WARNING,
+         ERROR, CRITICAL)
 
     Returns:
         logging.Logger: Настроенный логгер
@@ -29,7 +29,6 @@ def setup_logger(name, log_level_str="INFO"):
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # Не очищаем хендлеры если они уже есть (для предотвращения дублирования)
     if not logger.handlers:
         file_handler = logging.FileHandler(
             os.path.join(LOGS_DIR, "app.log"),
@@ -41,7 +40,7 @@ def setup_logger(name, log_level_str="INFO"):
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         stream_handler.setLevel(
-            level)  # Используем тот же уровень что и для логгера
+            level)
         logger.addHandler(stream_handler)
 
     return logger

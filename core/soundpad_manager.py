@@ -1,5 +1,6 @@
 """Модуль управления воспроизведением аудио через SoundPad."""
 import os
+from soundpad_control import SoundpadRemoteControl
 import subprocess
 import threading
 import time
@@ -8,20 +9,12 @@ from pathlib import Path
 
 import soundfile as sf
 
-from .constants import (
-    SOUNDPAD_ENABLED, SOUNDPAD_AUTO_START, SOUNDPAD_PATH,
-    SOUNDPAD_CLEANUP_AFTER_PLAY, SOUNDPAD_PLAYBACK_TIMEOUT,
+from core.constants import (
+    SOUNDPAD_AUTO_START, SOUNDPAD_PATH,
+    SOUNDPAD_PLAYBACK_TIMEOUT,
     SOUNDPAD_FORCE_STOP_BEFORE_PLAY, SOUNDPAD_PLAYBACK_DELAY,
     SOUNDPAD_MAX_RETRY_ATTEMPTS
 )
-
-SOUNDPAD_AVAILABLE = False
-try:
-    from soundpad_control import SoundpadRemoteControl
-
-    SOUNDPAD_AVAILABLE = True
-except ImportError:
-    pass
 
 
 class SoundpadManager:
@@ -29,7 +22,6 @@ class SoundpadManager:
 
     def __init__(self, config, logger):
         """Инициализирует менеджер SoundPad с конфигурацией и логгером.
-
         Args:
             config: Конфигурация приложения
             logger: Логгер для записи событий
@@ -46,23 +38,12 @@ class SoundpadManager:
         self._shutdown = False
 
         # Кеширование настроек для производительности
-        self._enabled = SOUNDPAD_ENABLED
         self._auto_start = SOUNDPAD_AUTO_START
         self._soundpad_path = SOUNDPAD_PATH
         self._play_in_speakers = self.cfg.get("play_in_speakers", True)
         self._play_in_microphone = self.cfg.get("play_in_microphone", True)
-        self._cleanup_after_play = SOUNDPAD_CLEANUP_AFTER_PLAY
+        self._cleanup_after_play = True
         self._playback_timeout = SOUNDPAD_PLAYBACK_TIMEOUT
-
-        if not SOUNDPAD_AVAILABLE:
-            self.logger.warning(
-                "soundpad_control library unavailable - SoundPad disabled")
-            self._enabled = False
-            return
-
-        if not self._enabled:
-            self.logger.info("SoundPad disabled in configuration")
-            return
 
         if self.ensure_running():
             self.logger.info("SoundPad ready")
@@ -71,9 +52,7 @@ class SoundpadManager:
 
     def _get_connection(self):
         """Создает новое подключение к SoundPad.
-
         Безопасно для вызова из любого потока.
-
         Returns:
             SoundpadRemoteControl or None: Подключение к SoundPad или None при ошибке
         """
@@ -85,7 +64,6 @@ class SoundpadManager:
 
     def _verify_connection(self, max_attempts=3, retry_delay=1.0):
         """Проверяет возможность подключения к SoundPad с повторными попытками.
-
         Args:
             max_attempts: Максимальное количество попыток
             retry_delay: Задержка между попытками в секундах
@@ -110,7 +88,6 @@ class SoundpadManager:
 
     def _is_soundpad_running(self):
         """Проверяет, запущен ли процесс SoundPad.
-
         Returns:
             bool: True если процесс запущен, False в противном случае
         """
@@ -141,16 +118,11 @@ class SoundpadManager:
 
     def ensure_running(self):
         """Запускает SoundPad если он не запущен и проверяет готовность к работе.
-
         Returns:
             bool: True если SoundPad запущен и готов, False в противном случае
         """
         if self._shutdown:
             self.logger.debug("Shutdown in progress")
-            return False
-
-        if not self._enabled:
-            self.logger.debug("SoundPad disabled")
             return False
 
         if self._verify_connection(max_attempts=1, retry_delay=0.5):
@@ -279,9 +251,6 @@ class SoundpadManager:
         Returns:
             concurrent.futures.Future or bool: Результат воспроизведения
         """
-        if not self._enabled:
-            self.logger.error("SoundPad disabled")
-            return False
 
         max_retries = SOUNDPAD_MAX_RETRY_ATTEMPTS
 

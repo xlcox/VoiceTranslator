@@ -3,8 +3,8 @@ import json
 import logging
 from pathlib import Path
 
-from .constants import CONFIG_FILE, DEFAULT_TTS_VOICES, DEFAULT_TTS_RATE, \
-    DEFAULT_TTS_VOLUME
+from core.constants import (CONFIG_FILE, DEFAULT_TTS_VOICES, DEFAULT_TTS_RATE,
+                            DEFAULT_TTS_VOLUME)
 
 logger = logging.getLogger(__name__)
 

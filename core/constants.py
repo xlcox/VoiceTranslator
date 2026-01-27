@@ -7,10 +7,8 @@ AUDIO_PLAYBACK_GAIN = 1.5  # Коэффициент усиления воспр�
 AUDIO_TEMP_FILE = "tts_temp.wav"  # Временный файл для TTS
 
 # Настройки SoundPad
-SOUNDPAD_ENABLED = True  # Включить интеграцию с SoundPad
 SOUNDPAD_AUTO_START = True  # Автозапуск SoundPad при необходимости
 SOUNDPAD_PATH = "SoundPad/Soundpad.exe"  # Путь к исполняемому файлу SoundPad
-SOUNDPAD_CLEANUP_AFTER_PLAY = True  # Удалять звук из SoundPad после воспроизведения
 SOUNDPAD_PLAYBACK_TIMEOUT = 10  # Таймаут ожидания воспроизведения (сек)
 SOUNDPAD_FORCE_STOP_BEFORE_PLAY = True  # Останавливать текущее воспроизведение перед новым
 SOUNDPAD_PLAYBACK_DELAY = 0.2  # Задержка перед воспроизведением (сек)
