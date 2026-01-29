@@ -12,8 +12,7 @@ import soundfile as sf
 from core.constants import (
     SOUNDPAD_AUTO_START, SOUNDPAD_PATH,
     SOUNDPAD_PLAYBACK_TIMEOUT,
-    SOUNDPAD_FORCE_STOP_BEFORE_PLAY, SOUNDPAD_PLAYBACK_DELAY,
-    SOUNDPAD_MAX_RETRY_ATTEMPTS
+    SOUNDPAD_FORCE_STOP_BEFORE_PLAY, SOUNDPAD_PLAYBACK_DELAY
 )
 
 
@@ -29,7 +28,6 @@ class SoundpadManager:
         """
         self.cfg = config.get("soundpad", {})
         self.logger = logger
-        self.soundpad = None
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(
             max_workers=2,
@@ -96,8 +94,6 @@ class SoundpadManager:
         Returns:
             bool: True если процесс запущен И отвечает на команды
         """
-        if os.name != 'nt':
-            return False
 
         process_exists = False
 

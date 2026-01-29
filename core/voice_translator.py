@@ -22,7 +22,7 @@ from core.constants import (
     HOTKEY_MIN_PRESS_DURATION, HOTKEY_DEBOUNCE_DELAY,
     PLAYBACK_WAIT_BUFFER, PLAYBACK_MAX_TIMEOUT,
     MODELS_DIR,
-    DEFAULT_TTS_VOICES, DEFAULT_TTS_RATE, DEFAULT_TTS_VOLUME
+    DEFAULT_TTS_RATE, DEFAULT_TTS_VOLUME
 )
 
 
@@ -76,20 +76,8 @@ class VoiceTranslator:
 
         self._max_buffer_blocks = int(
             (
-                        AUDIO_MAX_RECORDING_DURATION * AUDIO_SAMPLE_RATE) / AUDIO_BLOCKSIZE
+                    AUDIO_MAX_RECORDING_DURATION * AUDIO_SAMPLE_RATE) / AUDIO_BLOCKSIZE
         )
-
-        if not self.cfg['tts'].get('voice') or self.cfg['tts'][
-            'voice'].strip() == "":
-            target_lang = self.cfg['translation']['target_lang']
-            voice = DEFAULT_TTS_VOICES.get(target_lang)
-            if voice:
-                self.cfg['tts']['voice'] = voice
-                self.logger.info(
-                    f"Auto-selected TTS voice for {target_lang}: {voice}")
-            else:
-                self.logger.warning(
-                    f"No default TTS voice for language: {target_lang}")
 
         self.logger.debug(f"Temp file: {self._temp_file}")
         self.logger.debug(
@@ -217,111 +205,77 @@ class VoiceTranslator:
 
         for i in range(len(energy) - 1, -1, -1):
             if energy[i] > threshold:
-                end_point = min(i + int(0.2 * sample_rate), len(audio))
-                return audio[:end_point]
+                trim_samples = int(AUDIO_TRIM_TAIL_DURATION * sample_rate)
+                cut_point = min(i + trim_samples, len(audio))
+                return audio[:cut_point]
 
-        return audio[:int(sample_rate * 0.1)]
+        return audio
 
     def audio_callback(self, indata, frames, time_info, status):
-        """Callback функция для захвата аудио с микрофона.
+        """Обратный вызов для захвата аудио.
 
         Args:
             indata: Входные аудиоданные
-            frames: Количество кадров
-            time_info: Временная информация
-            status: Статус устройства
+            frames: Количество фреймов
+            time_info: Информация о времени
+            status: Статус потока
         """
         if status:
-            self.logger.debug(f"Audio status: {status}")
+            self.logger.warning(f"Audio callback status: {status}")
 
         if self._get_state() == AppState.RECORDING:
             with self._buffer_lock:
                 if len(self.audio_buffer) < self._max_buffer_blocks:
                     self.audio_buffer.append(indata.copy())
-                elif len(self.audio_buffer) == self._max_buffer_blocks:
-                    self.logger.warning(
-                        f"Recording limit reached ({AUDIO_MAX_RECORDING_DURATION}s)")
 
     def _transcribe(self, audio):
-        """Распознает речь в аудиоданных с помощью Whisper.
+        """Синхронная транскрипция аудио с использованием Whisper.
 
         Args:
-            audio: Аудиоданные для распознавания
+            audio: Аудиоданные
 
         Returns:
             str or None: Распознанный текст или None при ошибке
         """
-        if self.model is None:
-            self.logger.error("Whisper model not loaded")
-            return None
-
-        if np.max(np.abs(audio)) < 0.01:
-            return None
-
         try:
+            source_lang = self.cfg['translation']['source_lang']
             result = self.model.transcribe(
                 audio,
-                language=self.cfg['translation']['source_lang'],
-                fp16=False,
-                task="transcribe"
+                language=source_lang,
+                fp16=False
             )
-            return result["text"].strip()
+            text = result["text"].strip()
+            return text if text else None
         except Exception as e:
             self.logger.error(f"Transcription error: {e}")
             return None
 
     def _translate_sync(self, text):
-        """Синхронная обертка для перевода через Argos.
+        """Синхронный перевод текста.
 
         Args:
             text: Текст для перевода
 
         Returns:
-            str: Переведенный текст или оригинал при ошибке
+            str: Переведенный текст
         """
-        if not text or not self.translator:
-            return text
+        if not self.translator:
+            raise RuntimeError("Translator not initialized")
 
-        try:
-            from_lang, to_lang = self.translator
-            translation = from_lang.get_translation(to_lang)
-
-            if translation:
-                translated_text = translation.translate(text)
-                self.logger.debug(
-                    f"Translation: {text[:50]}... → {translated_text[:50]}...")
-                return translated_text
-            else:
-                self.logger.warning(
-                    f"Translation {from_lang.code}→{to_lang.code} unavailable")
-                return text
-
-        except Exception as e:
-            self.logger.error(f"Translation error: {e}")
-            return text
+        from_lang, to_lang = self.translator
+        translation = from_lang.get_translation(to_lang)
+        return translation.translate(text)
 
     async def _generate_tts(self, text):
-        """Синтезирует речь из текста с помощью Edge TTS.
+        """Генерирует TTS аудио с использованием Edge TTS.
 
         Args:
             text: Текст для синтеза
 
         Returns:
-            str or None: Путь к созданному аудиофайлу или None при ошибке
+            str or None: Путь к сгенерированному файлу или None при ошибке
         """
-        if not text:
-            return None
-
         tts_cfg = self.cfg['tts']
-
-        if not tts_cfg.get('voice') or tts_cfg['voice'].strip() == "":
-            target_lang = self.cfg['translation']['target_lang']
-            voice = DEFAULT_TTS_VOICES.get(target_lang)
-            if not voice:
-                self.logger.error(f"No TTS voice for language: {target_lang}")
-                return None
-            tts_cfg['voice'] = voice
-            self.logger.info(f"Using auto-selected voice: {voice}")
 
         try:
             communicate = edge_tts.Communicate(
