@@ -43,3 +43,4 @@ SoundPad/
 # Temp files
 *.tmp
 tts_temp.wav
+/build_env/
